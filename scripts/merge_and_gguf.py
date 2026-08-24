@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -35,6 +36,10 @@ def main():
         "unsloth/Qwen2.5-3B-bnb-4bit" if tier == "T4"
         else "unsloth/Qwen2.5-7B-bnb-4bit"
     )
+    merge_base = (
+        "Qwen/Qwen2.5-3B" if tier == "T4"
+        else "Qwen/Qwen2.5-7B"
+    )
     max_len = 512 if tier == "T4" else 1024
 
     Path(args.merged_output).mkdir(parents=True, exist_ok=True)
@@ -42,26 +47,42 @@ def main():
 
     print(f"Tier: {tier}  base: {base}  quants: {quants}")
 
-    from peft import PeftModel
-    from unsloth import FastLanguageModel
     import gc
     import torch
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from unsloth import FastLanguageModel
 
     # Step 1: the DPO adapter is the SFT LoRA continued with the DPO objective.
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=base, max_seq_length=max_len, dtype=None, load_in_4bit=True,
+    # Merge against the unquantized base.  Merging into bitsandbytes Linear4bit
+    # modules is version-sensitive and currently breaks on Colab (`base_layer`).
+    model = AutoModelForCausalLM.from_pretrained(
+        merge_base,
+        torch_dtype=torch.float16,
+        device_map="auto",
+        low_cpu_mem_usage=True,
     )
+    tokenizer = AutoTokenizer.from_pretrained(merge_base)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = PeftModel.from_pretrained(model, args.dpo_path)
-    print("Loaded combined SFT+DPO adapter")
+    model = PeftModel.from_pretrained(model, args.dpo_path, is_trainable=False)
+    model = model.merge_and_unload(safe_merge=True)
+    print(f"Loaded and merged combined SFT+DPO adapter into {merge_base}")
 
     # Step 2: save merged FP16
-    model.save_pretrained_merged(
-        args.merged_output, tokenizer, save_method="merged_16bit",
+    merged_output = Path(args.merged_output)
+    merged_tmp = merged_output.with_name(f".{merged_output.name}.tmp")
+    if merged_tmp.exists():
+        shutil.rmtree(merged_tmp)
+    model.save_pretrained(
+        str(merged_tmp), safe_serialization=True, max_shard_size="2GB",
     )
-    print(f"Saved merged FP16 to {args.merged_output}")
+    tokenizer.save_pretrained(str(merged_tmp))
+    if merged_output.exists():
+        shutil.rmtree(merged_output)
+    merged_tmp.replace(merged_output)
+    print(f"Saved merged FP16 to {merged_output}")
 
     del model
     gc.collect()
@@ -69,7 +90,7 @@ def main():
 
     # Step 3: GGUF quantize each tier
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=args.merged_output,
+        model_name=str(merged_output),
         max_seq_length=max_len, dtype=None, load_in_4bit=False,
     )
 

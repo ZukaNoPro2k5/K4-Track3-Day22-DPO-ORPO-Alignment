@@ -53,8 +53,12 @@ def test_full_pipeline_cells_parse_and_fail_fast():
 def test_gguf_export_uses_combined_dpo_adapter():
     notebook = (REPO / "notebooks" / "05_merge_deploy_gguf.py").read_text(encoding="utf-8")
     script = (REPO / "scripts" / "merge_and_gguf.py").read_text(encoding="utf-8")
-    assert "PeftModel.from_pretrained(model, str(DPO_PATH))" in notebook
-    assert "PeftModel.from_pretrained(model, args.dpo_path)" in script
+    assert "PeftModel.from_pretrained(model, str(DPO_PATH), is_trainable=False)" in notebook
+    assert "PeftModel.from_pretrained(model, args.dpo_path, is_trainable=False)" in script
+    assert "model.merge_and_unload(safe_merge=True)" in notebook
+    assert "model.merge_and_unload(safe_merge=True)" in script
+    assert '"Qwen/Qwen2.5-3B"' in notebook
+    assert '"Qwen/Qwen2.5-3B"' in script
 
 
 def test_trainer_uses_processing_class_not_tokenizer():

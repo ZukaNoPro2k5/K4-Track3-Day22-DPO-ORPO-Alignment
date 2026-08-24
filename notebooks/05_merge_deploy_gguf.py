@@ -24,6 +24,7 @@
 # %%
 import os
 import json
+import shutil
 from pathlib import Path
 
 COMPUTE_TIER = os.environ.get("COMPUTE_TIER", "T4").upper()
@@ -31,11 +32,16 @@ BASE_MODEL = (
     "unsloth/Qwen2.5-3B-bnb-4bit" if COMPUTE_TIER == "T4"
     else "unsloth/Qwen2.5-7B-bnb-4bit"
 )
+MERGE_BASE_MODEL = (
+    "Qwen/Qwen2.5-3B" if COMPUTE_TIER == "T4"
+    else "Qwen/Qwen2.5-7B"
+)
 MAX_LEN = 512 if COMPUTE_TIER == "T4" else 1024
 
 REPO_ROOT = Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()
 DPO_PATH = REPO_ROOT / "adapters" / "dpo"
 MERGED_PATH = REPO_ROOT / "adapters" / "merged-fp16"
+MERGED_TMP_PATH = REPO_ROOT / "adapters" / ".merged-fp16.tmp"
 GGUF_DIR = REPO_ROOT / "gguf"
 MERGED_PATH.mkdir(parents=True, exist_ok=True)
 GGUF_DIR.mkdir(parents=True, exist_ok=True)
@@ -53,24 +59,27 @@ import torch
 assert torch.cuda.is_available()
 
 # %% [markdown]
-# ## 1. Load DPO model + merge adapter
+# ## 1. Load the FP16 base + merge the DPO adapter
 
 # %%
-from unsloth import FastLanguageModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
-model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name=BASE_MODEL,
-    max_seq_length=MAX_LEN,
-    dtype=None,
-    load_in_4bit=True,
+model = AutoModelForCausalLM.from_pretrained(
+    MERGE_BASE_MODEL,
+    torch_dtype=torch.float16,
+    device_map="auto",
+    low_cpu_mem_usage=True,
 )
+tokenizer = AutoTokenizer.from_pretrained(MERGE_BASE_MODEL)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
 # The DPO adapter continues the SFT LoRA, so it already contains both stages.
-model = PeftModel.from_pretrained(model, str(DPO_PATH))
+model = PeftModel.from_pretrained(model, str(DPO_PATH), is_trainable=False)
+model = model.merge_and_unload(safe_merge=True)
 print(f"Loaded combined SFT+DPO adapter from {DPO_PATH}")
+print(f"Merged it into full-precision base {MERGE_BASE_MODEL}")
 
 # %% [markdown]
 # > **Note:** NB3 continues training the SFT LoRA with the DPO objective. The
@@ -80,18 +89,24 @@ print(f"Loaded combined SFT+DPO adapter from {DPO_PATH}")
 # %% [markdown]
 # ## 2. Save merged FP16 weights
 #
-# `save_pretrained_merged(method="merged_16bit")` produces a HuggingFace-format
-# directory you can either upload to HF Hub directly OR feed into the GGUF
-# converter in step 3.
+# Standard PEFT merge is intentionally used here instead of merging a bitsandbytes
+# `Linear4bit` model.  The latter is version-sensitive and can fail with
+# `Linear4bit has no attribute base_layer` on Colab's current Unsloth/PEFT stack.
 
 # %%
-# This merges the combined SFT+DPO adapter into the base weights.
-# Output is FP16 (or BF16 on Ampere+) HF-format weights ready for inference.
-model.save_pretrained_merged(
-    str(MERGED_PATH),
-    tokenizer,
-    save_method="merged_16bit",
+# Write to a temporary sibling first so a failed rerun never leaves a half-written
+# directory that looks like a valid merged model.
+if MERGED_TMP_PATH.exists():
+    shutil.rmtree(MERGED_TMP_PATH)
+model.save_pretrained(
+    str(MERGED_TMP_PATH),
+    safe_serialization=True,
+    max_shard_size="2GB",
 )
+tokenizer.save_pretrained(str(MERGED_TMP_PATH))
+if MERGED_PATH.exists():
+    shutil.rmtree(MERGED_PATH)
+MERGED_TMP_PATH.replace(MERGED_PATH)
 print(f"Saved merged FP16 to {MERGED_PATH}")
 
 # Free GPU memory before GGUF conversion (which spawns a subprocess that needs RAM)
@@ -227,6 +242,7 @@ print(f"\nTokens used: {response['usage']}")
 deploy_meta = {
     "compute_tier": COMPUTE_TIER,
     "base_model": BASE_MODEL,
+    "merge_base_model": MERGE_BASE_MODEL,
     "merged_path": str(MERGED_PATH),
     "gguf_path": str(gguf_path),
     "gguf_size_mb": round(gguf_path.stat().st_size / 1e6, 1),
