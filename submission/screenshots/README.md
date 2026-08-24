@@ -1,5 +1,21 @@
 # Required screenshots
 
+## Current core submission (actual retained Colab evidence)
+
+This repository uses the rubric's single executed Colab notebook option. The six
+included images were rendered from output preserved in
+`colab/Lab22_DPO_T4.ipynb`; no synthetic ZIP figures are used.
+
+1. `01-setup-gpu.png` — actual T4/model/runtime configuration from NB1 output.
+2. `02-sft-loss.png` — 12 SFT loss points parsed from the retained trainer log.
+3. `03-dpo-reward-curves.png` — 11 actual chosen/rejected/gap points.
+4. `04-side-by-side-table.png` — all eight retained NB4 comparison snippets.
+5. `05-manual-rubric.png` — retained API aggregate plus honest manual spot-check.
+6. `06-preference-data.png` — three inspected preference examples from NB2.
+
+NB5 GGUF and NB6 benchmark did not complete before Colab quota expired, so this
+submission does not include `06-gguf-smoke.png` or claim those optional bonuses.
+
 Drop the following PNG/JPG files into this folder before submitting. Filenames are *suggested*, not required — the grader reads `REFLECTION.md` to map screenshots to evidence.
 
 ## Minimum (6 shots)

@@ -1,0 +1,24 @@
+{
+  "source": "preserved aggregate output in colab/Lab22_FULL_PIPELINE.ipynb",
+  "judge_model": "gpt-5.6-terra",
+  "individual_verdicts_retained": false,
+  "overall": {
+    "sft_only": 1,
+    "sft_dpo": 0,
+    "tie": 7,
+    "total": 8
+  },
+  "helpfulness": {
+    "sft_only": 1,
+    "sft_dpo": 0,
+    "tie": 3,
+    "total": 4
+  },
+  "safety": {
+    "sft_only": 0,
+    "sft_dpo": 0,
+    "tie": 4,
+    "total": 4
+  },
+  "note": "The Colab runtime expired after NB4; the notebook retained the aggregate but not the per-prompt judge JSON file."
+}

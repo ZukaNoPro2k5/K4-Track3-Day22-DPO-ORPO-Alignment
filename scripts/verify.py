@@ -48,6 +48,53 @@ def check_screenshots(folder: Path, min_count: int, problems: list[str]) -> int:
     return len(images)
 
 
+def notebook_output_stats(path: Path) -> tuple[int, int, int]:
+    """Return (executed code cells, code cells with output, error cells)."""
+    try:
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return 0, 0, 0
+    code_cells = [cell for cell in notebook.get("cells", []) if cell.get("cell_type") == "code"]
+    executed = sum(cell.get("execution_count") is not None for cell in code_cells)
+    with_output = sum(bool(cell.get("outputs")) for cell in code_cells)
+    errors = sum(
+        any(output.get("output_type") == "error" for output in cell.get("outputs", []))
+        for cell in code_cells
+    )
+    return executed, with_output, errors
+
+
+def check_executed_notebooks(repo: Path, problems: list[str]) -> bool:
+    """Accept five executed stage notebooks or the rubric's single T4 notebook."""
+    t4 = repo / "colab" / "Lab22_DPO_T4.ipynb"
+    if t4.exists():
+        executed, with_output, errors = notebook_output_stats(t4)
+        text = t4.read_text(encoding="utf-8")
+        has_core = all(marker in text for marker in ("NB1", "NB2", "NB3", "NB4"))
+        if executed >= 4 and with_output >= 4 and has_core and errors == 0:
+            print(
+                f"  ✓ single executed Colab T4 notebook: "
+                f"{executed} executed cells, {with_output} output cells"
+            )
+            return True
+
+    stage_files = sorted((repo / "notebooks").glob("*.ipynb"))
+    executed_stage_files = []
+    for path in stage_files:
+        executed, with_output, errors = notebook_output_stats(path)
+        if executed > 0 and with_output > 0 and errors == 0:
+            executed_stage_files.append(path)
+    if len(executed_stage_files) >= 5:
+        print(f"  ✓ {len(executed_stage_files)} executed stage notebooks")
+        return True
+
+    problems.append(
+        "NOTEBOOKS  need 5 executed notebooks or one error-free executed "
+        "colab/Lab22_DPO_T4.ipynb containing NB1-NB4 outputs"
+    )
+    return False
+
+
 def check_reflection_edited(path: Path, problems: list[str]) -> bool:
     if not path.exists():
         problems.append("MISSING  submission/REFLECTION.md")
@@ -58,13 +105,37 @@ def check_reflection_edited(path: Path, problems: list[str]) -> bool:
         flags = re.MULTILINE if pattern.startswith("^") else 0
         if re.search(pattern, text, flags):
             leftover.append(pattern)
-    if len(leftover) >= 3:
+    if leftover:
         problems.append(
             f"UNEDITED submission/REFLECTION.md still has {len(leftover)} template placeholders. "
             f"Fill in your own numbers and answers."
         )
         return False
-    return True
+
+    headings = list(re.finditer(r"^##\s+(\d+)\.\s+", text, re.MULTILINE))
+    present = {int(match.group(1)) for match in headings}
+    missing = sorted(set(range(1, 7)) - present)
+    if missing:
+        problems.append(f"REFLECTION missing required sections: {missing}")
+        return False
+
+    ok = True
+    for section, minimum in ((3, 150), (6, 150)):
+        match = next((item for item in headings if int(item.group(1)) == section), None)
+        if match is None:
+            continue
+        following = [item.start() for item in headings if item.start() > match.start()]
+        end = min(following) if following else len(text)
+        body = text[match.end():end]
+        words = re.findall(r"\b\w+\b", body, re.UNICODE)
+        if len(words) < minimum:
+            problems.append(
+                f"REFLECTION §{section} has {len(words)} words; need at least {minimum}"
+            )
+            ok = False
+        else:
+            print(f"  ✓ REFLECTION §{section}: {len(words)} words")
+    return ok
 
 
 def check_dpo_metrics(repo: Path, problems: list[str]) -> bool:
@@ -184,6 +255,8 @@ def main() -> int:
     problems: list[str] = []
     print(f"==> Verifying submission readiness at {repo}\n")
 
+    check_executed_notebooks(repo, problems)
+
     # Notebook source files
     for nb in ["01_sft_mini.py", "02_preference_data.py", "03_dpo_train.py",
                "04_compare_and_eval.py", "05_merge_deploy_gguf.py"]:
@@ -217,7 +290,7 @@ def main() -> int:
 
     # Submission artifacts (core)
     check_reflection_edited(repo / "submission" / "REFLECTION.md", problems)
-    n_shots = check_screenshots(repo / "submission" / "screenshots", min_count=3, problems=problems)
+    n_shots = check_screenshots(repo / "submission" / "screenshots", min_count=6, problems=problems)
     if n_shots:
         print(f"  ✓ submission/screenshots/ has {n_shots} image(s)")
 

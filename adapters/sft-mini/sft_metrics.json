@@ -1,0 +1,60 @@
+{
+  "source": "preserved output in colab/Lab22_FULL_PIPELINE.ipynb",
+  "compute_tier": "T4",
+  "base_model": "unsloth/Qwen2.5-3B-bnb-4bit",
+  "dataset": "bkai-foundation-models/vi-alpaca",
+  "samples": 1000,
+  "epochs": 1.0,
+  "train_runtime_seconds": 470.3119,
+  "final_train_loss": 1.1547,
+  "history": [
+    {
+      "epoch": 0.08,
+      "loss": 1.5631
+    },
+    {
+      "epoch": 0.16,
+      "loss": 1.1578
+    },
+    {
+      "epoch": 0.24,
+      "loss": 1.18
+    },
+    {
+      "epoch": 0.32,
+      "loss": 1.1222
+    },
+    {
+      "epoch": 0.4,
+      "loss": 1.1089
+    },
+    {
+      "epoch": 0.48,
+      "loss": 1.0881
+    },
+    {
+      "epoch": 0.56,
+      "loss": 1.1069
+    },
+    {
+      "epoch": 0.64,
+      "loss": 1.1509
+    },
+    {
+      "epoch": 0.72,
+      "loss": 1.0618
+    },
+    {
+      "epoch": 0.8,
+      "loss": 1.1158
+    },
+    {
+      "epoch": 0.88,
+      "loss": 1.1195
+    },
+    {
+      "epoch": 0.96,
+      "loss": 1.1247
+    }
+  ]
+}
