@@ -31,6 +31,22 @@ def find_gguf_files(*roots: Path) -> list[Path]:
     return sorted(found.values())
 
 
+def normalized_quant(path: Path) -> str:
+    return "".join(ch for ch in path.name.lower() if ch.isalnum())
+
+
+def normalize_gguf_files(destination: Path, *roots: Path) -> list[Path]:
+    destination.mkdir(parents=True, exist_ok=True)
+    for source in find_gguf_files(destination, *roots):
+        if source.parent.resolve() == destination.resolve():
+            continue
+        target = destination / source.name
+        if not target.exists():
+            shutil.move(str(source), str(target))
+            print(f"Moved GGUF output into {target}")
+    return find_gguf_files(destination)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sft-path", default=str(REPO / "adapters" / "sft-mini"))
@@ -111,27 +127,32 @@ def main():
     gc.collect()
     torch.cuda.empty_cache()
 
-    # Step 3: GGUF quantize each tier
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=str(merged_output),
-        max_seq_length=max_len, dtype=None, load_in_4bit=False,
-    )
-
-    for q in quants:
-        print(f"Quantizing to GGUF {q}...")
-        result = model.save_pretrained_gguf(
-            args.gguf_output, tokenizer, quantization_method=q,
-        )
-        print(f"Unsloth GGUF result: {result!r}")
-
+    # Step 3: recover outputs from Unsloth's alternate layout, then only run
+    # quantizations that are genuinely missing.
     gguf_output = Path(args.gguf_output)
-    for source in find_gguf_files(gguf_output, REPO):
-        if source.parent.resolve() == gguf_output.resolve():
-            continue
-        destination = gguf_output / source.name
-        if not destination.exists():
-            shutil.move(str(source), str(destination))
-            print(f"Moved GGUF output into {destination}")
+    existing = normalize_gguf_files(gguf_output, REPO)
+    missing_quants = [
+        q for q in quants
+        if not any(
+            "".join(ch for ch in q.lower() if ch.isalnum()) in normalized_quant(path)
+            for path in existing
+        )
+    ]
+    if missing_quants:
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=str(merged_output),
+            max_seq_length=max_len, dtype=None, load_in_4bit=False,
+        )
+        for q in missing_quants:
+            print(f"Quantizing to GGUF {q}...")
+            result = model.save_pretrained_gguf(
+                args.gguf_output, tokenizer, quantization_method=q,
+            )
+            print(f"Unsloth GGUF result: {result!r}")
+        normalize_gguf_files(gguf_output, REPO)
+    else:
+        model = None
+        print(f"All requested GGUF tiers already exist: {quants}")
 
     print(f"\nGGUF files in {args.gguf_output}:")
     for p in sorted(Path(args.gguf_output).iterdir()):

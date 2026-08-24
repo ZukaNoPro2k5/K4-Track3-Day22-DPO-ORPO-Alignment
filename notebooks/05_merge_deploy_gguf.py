@@ -66,6 +66,18 @@ def is_q4_k_m(path: Path) -> bool:
     normalized = "".join(ch for ch in path.name.lower() if ch.isalnum())
     return "q4km" in normalized
 
+
+def normalize_gguf_files(destination: Path, *roots: Path) -> list[Path]:
+    destination.mkdir(parents=True, exist_ok=True)
+    for source in find_gguf_files(destination, *roots):
+        if source.parent.resolve() == destination.resolve():
+            continue
+        target = destination / source.name
+        if not target.exists():
+            shutil.move(str(source), str(target))
+            print(f"Moved GGUF output into {target}")
+    return find_gguf_files(destination)
+
 print(f"COMPUTE_TIER:    {COMPUTE_TIER}")
 print(f"DPO adapter:     {DPO_PATH}")
 print(f"merged output:   {MERGED_PATH}")
@@ -153,37 +165,38 @@ torch.cuda.empty_cache()
 # llama.cpp (~3 min) then quantizes (~30 s).
 
 # %%
-# Reload the merged model — Unsloth's GGUF saver expects a live model handle.
-from unsloth import FastLanguageModel as FLM
+# First recover an output that an earlier Unsloth run may have written next to
+# `GGUF_DIR`. This avoids repeating an expensive conversion after a detector-only
+# failure.
+existing_q4 = [
+    p for p in normalize_gguf_files(GGUF_DIR, REPO_ROOT) if is_q4_k_m(p)
+]
+if existing_q4:
+    model = None
+    print(f"Reusing existing Q4_K_M GGUF: {existing_q4[0]}")
+else:
+    # Reload the merged model — Unsloth's GGUF saver expects a live model handle.
+    from unsloth import FastLanguageModel as FLM
 
-model, tokenizer = FLM.from_pretrained(
-    model_name=str(MERGED_PATH),
-    max_seq_length=MAX_LEN,
-    dtype=None,
-    load_in_4bit=False,    # already merged; load full precision
-)
+    model, tokenizer = FLM.from_pretrained(
+        model_name=str(MERGED_PATH),
+        max_seq_length=MAX_LEN,
+        dtype=None,
+        load_in_4bit=False,    # already merged; load full precision
+    )
 
 # %%
 # Save GGUF in 1 quantization tier (Q4_K_M). Add more tiers below if you want the
 # +3 "GGUF release published" rigor add-on.
-gguf_result = model.save_pretrained_gguf(
-    str(GGUF_DIR),
-    tokenizer,
-    quantization_method="q4_k_m",
-)
-print(f"Unsloth GGUF result: {gguf_result!r}")
-print(f"Saved GGUF Q4_K_M to {GGUF_DIR}")
-
-# Unsloth versions differ in whether they place the result inside `GGUF_DIR`
-# or next to it with the directory name as a filename prefix. Normalize both.
-all_ggufs = find_gguf_files(GGUF_DIR, REPO_ROOT)
-for source in all_ggufs:
-    if source.parent.resolve() == GGUF_DIR.resolve():
-        continue
-    destination = GGUF_DIR / source.name
-    if not destination.exists():
-        shutil.move(str(source), str(destination))
-        print(f"Moved GGUF output into {destination}")
+if not existing_q4:
+    gguf_result = model.save_pretrained_gguf(
+        str(GGUF_DIR),
+        tokenizer,
+        quantization_method="q4_k_m",
+    )
+    print(f"Unsloth GGUF result: {gguf_result!r}")
+    print(f"Saved GGUF Q4_K_M to {GGUF_DIR}")
+    normalize_gguf_files(GGUF_DIR, REPO_ROOT)
 
 # %% [markdown]
 # ### 3a. Optional — additional quantization tiers (for the +3 rigor add-on)
@@ -204,7 +217,8 @@ for p in sorted(GGUF_DIR.iterdir()):
         size_mb = p.stat().st_size / 1e6
         print(f"  {p.name:50s}  {size_mb:>8.1f} MB")
 
-del model
+if model is not None:
+    del model
 gc.collect()
 torch.cuda.empty_cache()
 
