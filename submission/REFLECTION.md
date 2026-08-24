@@ -1,5 +1,9 @@
 # Reflection — Lab 22 (DPO/ORPO Alignment)
 
+**Họ và tên:** Lê Văn Tuấn
+
+**MSSV:** 2A202601016
+
 **GitHub:** `ZukaNoPro2k5/K4-Track3-Day22-DPO-ORPO-Alignment`
 
 **Cohort:** A20-K4

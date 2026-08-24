@@ -3,6 +3,16 @@
 Lab cho **AICB-P2T3 · Ngày 22 · DPO/ORPO Alignment — From SFT to Preference Learning**.
 Build SFT-mini checkpoint → train DPO adapter → compare SFT-only vs SFT+DPO → merge + GGUF + serve.
 
+## Submission snapshot
+
+- **Sinh viên:** Lê Văn Tuấn — **MSSV:** 2A202601016
+- **Phương án nộp:** Option C — core evidence, không kèm model weights/GGUF.
+- **Executed evidence:** [`colab/Lab22_DPO_T4.ipynb`](colab/Lab22_DPO_T4.ipynb),
+  dùng phương án một notebook Colab đã chạy chứa NB1–NB4 theo `rubric.md`.
+- **Báo cáo:** [`submission/REFLECTION.md`](submission/REFLECTION.md).
+- **Ảnh minh chứng:** 6 ảnh thật trong [`submission/screenshots/`](submission/screenshots/).
+- **Kiểm tra sau khi clone:** chạy `python3 scripts/verify.py` hoặc `make verify`.
+
 > Lab 22 là **lab alignment đầu tiên trong khoá** — bạn đi từ SFT (Lab 21) sang preference learning, đo helpfulness/safety bằng judge, và export model deployable. Output có thể là 1 **DPO-aligned VN model open-source publishable đầu tiên end-to-end của khoá** (xem deck §5).
 
 ---
@@ -24,14 +34,14 @@ Build SFT-mini checkpoint → train DPO adapter → compare SFT-only vs SFT+DPO 
 
 **Option 1: Free Colab (zero install)**
 
-[![Open T4 in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/<your-username>/Day22-Track3-DPO-Alignment-Lab/blob/main/colab/Lab22_DPO_T4.ipynb)
+[![Open T4 in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ZukaNoPro2k5/K4-Track3-Day22-DPO-ORPO-Alignment/blob/main/colab/Lab22_DPO_T4.ipynb)
 
 Click → Runtime → Change runtime type → **T4 GPU** → Run all.
 
 **Option 2: Local laptop (≥ 12 GB VRAM)**
 
 ```bash
-git clone https://github.com/<your-username>/K4-Track3-Day22-DPO-ORPO-Alignment.git
+git clone https://github.com/ZukaNoPro2k5/K4-Track3-Day22-DPO-ORPO-Alignment.git
 cd K4-Track3-Day22-DPO-ORPO-Alignment
 bash setup-laptop.sh    # ~5 min — venv + deps + cuda probe + smoke test
 make smoke              # import + GPU check (no training)
