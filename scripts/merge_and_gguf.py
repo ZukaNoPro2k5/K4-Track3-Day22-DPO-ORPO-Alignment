@@ -19,6 +19,18 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 
+def find_gguf_files(*roots: Path) -> list[Path]:
+    found: dict[str, Path] = {}
+    for root in roots:
+        if not root.exists():
+            continue
+        candidates = [root] if root.is_file() else root.rglob("*")
+        for candidate in candidates:
+            if candidate.is_file() and candidate.suffix.lower() == ".gguf":
+                found[str(candidate.resolve())] = candidate
+    return sorted(found.values())
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sft-path", default=str(REPO / "adapters" / "sft-mini"))
@@ -53,38 +65,49 @@ def main():
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from unsloth import FastLanguageModel
 
-    # Step 1: the DPO adapter is the SFT LoRA continued with the DPO objective.
-    # Merge against the unquantized base.  Merging into bitsandbytes Linear4bit
-    # modules is version-sensitive and currently breaks on Colab (`base_layer`).
-    model = AutoModelForCausalLM.from_pretrained(
-        merge_base,
-        torch_dtype=torch.float16,
-        device_map="auto",
-        low_cpu_mem_usage=True,
+    merged_output = Path(args.merged_output)
+    merged_ready = (
+        (merged_output / "config.json").exists()
+        and any(merged_output.glob("*.safetensors"))
     )
-    tokenizer = AutoTokenizer.from_pretrained(merge_base)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    if merged_ready:
+        model = None
+        tokenizer = AutoTokenizer.from_pretrained(str(merged_output))
+        print(f"Reusing completed merged FP16 checkpoint at {merged_output}")
+    else:
+        # Step 1: the DPO adapter is the SFT LoRA continued with the DPO objective.
+        # Merge against the unquantized base. Merging into bitsandbytes Linear4bit
+        # modules is version-sensitive and currently breaks on Colab (`base_layer`).
+        model = AutoModelForCausalLM.from_pretrained(
+            merge_base,
+            torch_dtype=torch.float16,
+            device_map="auto",
+            low_cpu_mem_usage=True,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(merge_base)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
 
-    model = PeftModel.from_pretrained(model, args.dpo_path, is_trainable=False)
-    model = model.merge_and_unload(safe_merge=True)
-    print(f"Loaded and merged combined SFT+DPO adapter into {merge_base}")
+        model = PeftModel.from_pretrained(model, args.dpo_path, is_trainable=False)
+        model = model.merge_and_unload(safe_merge=True)
+        print(f"Loaded and merged combined SFT+DPO adapter into {merge_base}")
 
     # Step 2: save merged FP16
-    merged_output = Path(args.merged_output)
-    merged_tmp = merged_output.with_name(f".{merged_output.name}.tmp")
-    if merged_tmp.exists():
-        shutil.rmtree(merged_tmp)
-    model.save_pretrained(
-        str(merged_tmp), safe_serialization=True, max_shard_size="2GB",
-    )
-    tokenizer.save_pretrained(str(merged_tmp))
-    if merged_output.exists():
-        shutil.rmtree(merged_output)
-    merged_tmp.replace(merged_output)
-    print(f"Saved merged FP16 to {merged_output}")
+    if not merged_ready:
+        merged_tmp = merged_output.with_name(f".{merged_output.name}.tmp")
+        if merged_tmp.exists():
+            shutil.rmtree(merged_tmp)
+        model.save_pretrained(
+            str(merged_tmp), safe_serialization=True, max_shard_size="2GB",
+        )
+        tokenizer.save_pretrained(str(merged_tmp))
+        if merged_output.exists():
+            shutil.rmtree(merged_output)
+        merged_tmp.replace(merged_output)
+        print(f"Saved merged FP16 to {merged_output}")
 
-    del model
+    if model is not None:
+        del model
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -96,9 +119,19 @@ def main():
 
     for q in quants:
         print(f"Quantizing to GGUF {q}...")
-        model.save_pretrained_gguf(
+        result = model.save_pretrained_gguf(
             args.gguf_output, tokenizer, quantization_method=q,
         )
+        print(f"Unsloth GGUF result: {result!r}")
+
+    gguf_output = Path(args.gguf_output)
+    for source in find_gguf_files(gguf_output, REPO):
+        if source.parent.resolve() == gguf_output.resolve():
+            continue
+        destination = gguf_output / source.name
+        if not destination.exists():
+            shutil.move(str(source), str(destination))
+            print(f"Moved GGUF output into {destination}")
 
     print(f"\nGGUF files in {args.gguf_output}:")
     for p in sorted(Path(args.gguf_output).iterdir()):

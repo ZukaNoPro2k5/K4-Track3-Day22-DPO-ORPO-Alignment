@@ -48,6 +48,24 @@ GGUF_DIR.mkdir(parents=True, exist_ok=True)
 
 assert DPO_PATH.exists(), "NB3 must run first"
 
+
+def find_gguf_files(*roots: Path) -> list[Path]:
+    """Find GGUF outputs across Unsloth's old and new output layouts."""
+    found: dict[str, Path] = {}
+    for root in roots:
+        if not root.exists():
+            continue
+        candidates = [root] if root.is_file() else root.rglob("*")
+        for candidate in candidates:
+            if candidate.is_file() and candidate.suffix.lower() == ".gguf":
+                found[str(candidate.resolve())] = candidate
+    return sorted(found.values())
+
+
+def is_q4_k_m(path: Path) -> bool:
+    normalized = "".join(ch for ch in path.name.lower() if ch.isalnum())
+    return "q4km" in normalized
+
 print(f"COMPUTE_TIER:    {COMPUTE_TIER}")
 print(f"DPO adapter:     {DPO_PATH}")
 print(f"merged output:   {MERGED_PATH}")
@@ -65,21 +83,30 @@ assert torch.cuda.is_available()
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
-model = AutoModelForCausalLM.from_pretrained(
-    MERGE_BASE_MODEL,
-    torch_dtype=torch.float16,
-    device_map="auto",
-    low_cpu_mem_usage=True,
+merged_ready = (
+    (MERGED_PATH / "config.json").exists()
+    and any(MERGED_PATH.glob("*.safetensors"))
 )
-tokenizer = AutoTokenizer.from_pretrained(MERGE_BASE_MODEL)
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
+if merged_ready:
+    model = None
+    tokenizer = AutoTokenizer.from_pretrained(str(MERGED_PATH))
+    print(f"Reusing completed merged FP16 checkpoint at {MERGED_PATH}")
+else:
+    model = AutoModelForCausalLM.from_pretrained(
+        MERGE_BASE_MODEL,
+        torch_dtype=torch.float16,
+        device_map="auto",
+        low_cpu_mem_usage=True,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(MERGE_BASE_MODEL)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
-# The DPO adapter continues the SFT LoRA, so it already contains both stages.
-model = PeftModel.from_pretrained(model, str(DPO_PATH), is_trainable=False)
-model = model.merge_and_unload(safe_merge=True)
-print(f"Loaded combined SFT+DPO adapter from {DPO_PATH}")
-print(f"Merged it into full-precision base {MERGE_BASE_MODEL}")
+    # The DPO adapter continues the SFT LoRA, so it already contains both stages.
+    model = PeftModel.from_pretrained(model, str(DPO_PATH), is_trainable=False)
+    model = model.merge_and_unload(safe_merge=True)
+    print(f"Loaded combined SFT+DPO adapter from {DPO_PATH}")
+    print(f"Merged it into full-precision base {MERGE_BASE_MODEL}")
 
 # %% [markdown]
 # > **Note:** NB3 continues training the SFT LoRA with the DPO objective. The
@@ -96,23 +123,25 @@ print(f"Merged it into full-precision base {MERGE_BASE_MODEL}")
 # %%
 # Write to a temporary sibling first so a failed rerun never leaves a half-written
 # directory that looks like a valid merged model.
-if MERGED_TMP_PATH.exists():
-    shutil.rmtree(MERGED_TMP_PATH)
-model.save_pretrained(
-    str(MERGED_TMP_PATH),
-    safe_serialization=True,
-    max_shard_size="2GB",
-)
-tokenizer.save_pretrained(str(MERGED_TMP_PATH))
-if MERGED_PATH.exists():
-    shutil.rmtree(MERGED_PATH)
-MERGED_TMP_PATH.replace(MERGED_PATH)
-print(f"Saved merged FP16 to {MERGED_PATH}")
+if not merged_ready:
+    if MERGED_TMP_PATH.exists():
+        shutil.rmtree(MERGED_TMP_PATH)
+    model.save_pretrained(
+        str(MERGED_TMP_PATH),
+        safe_serialization=True,
+        max_shard_size="2GB",
+    )
+    tokenizer.save_pretrained(str(MERGED_TMP_PATH))
+    if MERGED_PATH.exists():
+        shutil.rmtree(MERGED_PATH)
+    MERGED_TMP_PATH.replace(MERGED_PATH)
+    print(f"Saved merged FP16 to {MERGED_PATH}")
 
 # Free GPU memory before GGUF conversion (which spawns a subprocess that needs RAM)
 import gc
 
-del model
+if model is not None:
+    del model
 gc.collect()
 torch.cuda.empty_cache()
 
@@ -137,12 +166,24 @@ model, tokenizer = FLM.from_pretrained(
 # %%
 # Save GGUF in 1 quantization tier (Q4_K_M). Add more tiers below if you want the
 # +3 "GGUF release published" rigor add-on.
-model.save_pretrained_gguf(
+gguf_result = model.save_pretrained_gguf(
     str(GGUF_DIR),
     tokenizer,
     quantization_method="q4_k_m",
 )
+print(f"Unsloth GGUF result: {gguf_result!r}")
 print(f"Saved GGUF Q4_K_M to {GGUF_DIR}")
+
+# Unsloth versions differ in whether they place the result inside `GGUF_DIR`
+# or next to it with the directory name as a filename prefix. Normalize both.
+all_ggufs = find_gguf_files(GGUF_DIR, REPO_ROOT)
+for source in all_ggufs:
+    if source.parent.resolve() == GGUF_DIR.resolve():
+        continue
+    destination = GGUF_DIR / source.name
+    if not destination.exists():
+        shutil.move(str(source), str(destination))
+        print(f"Moved GGUF output into {destination}")
 
 # %% [markdown]
 # ### 3a. Optional — additional quantization tiers (for the +3 rigor add-on)
@@ -174,7 +215,7 @@ torch.cuda.empty_cache()
 from llama_cpp import Llama
 
 # Find the Q4_K_M GGUF
-gguf_files = list(GGUF_DIR.glob("*Q4_K_M*.gguf")) + list(GGUF_DIR.glob("*q4_k_m*.gguf"))
+gguf_files = [p for p in find_gguf_files(GGUF_DIR) if is_q4_k_m(p)]
 assert gguf_files, "No Q4_K_M GGUF found — step 3 may have failed"
 gguf_path = gguf_files[0]
 print(f"Loading: {gguf_path.name}")

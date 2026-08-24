@@ -59,6 +59,10 @@ def test_gguf_export_uses_combined_dpo_adapter():
     assert "model.merge_and_unload(safe_merge=True)" in script
     assert '"Qwen/Qwen2.5-3B"' in notebook
     assert '"Qwen/Qwen2.5-3B"' in script
+    assert "def find_gguf_files(" in notebook
+    assert "def find_gguf_files(" in script
+    assert "Reusing completed merged FP16 checkpoint" in notebook
+    assert "Reusing completed merged FP16 checkpoint" in script
 
 
 def test_trainer_uses_processing_class_not_tokenizer():
