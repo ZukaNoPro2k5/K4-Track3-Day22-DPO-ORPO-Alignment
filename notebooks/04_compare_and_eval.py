@@ -239,9 +239,10 @@ def judge_with_openai(rows):
             prompt=p["prompt"], category=p["category"], sft=sft, dpo=dpo
         )
         resp = client.chat.completions.create(
-            model=os.environ.get("JUDGE_MODEL", "gpt-4o-mini"),
+            model=os.environ.get(
+                "OPENAI_JUDGE_MODEL", os.environ.get("JUDGE_MODEL", "gpt-5.6-terra")
+            ),
             messages=[{"role": "user", "content": msg}],
-            temperature=0,
             response_format={"type": "json_object"},
         )
         try:
@@ -266,7 +267,7 @@ def judge_with_anthropic(rows):
             prompt=p["prompt"], category=p["category"], sft=sft, dpo=dpo
         )
         resp = client.messages.create(
-            model=os.environ.get("JUDGE_MODEL", "claude-haiku-4-5"),
+            model=os.environ.get("ANTHROPIC_JUDGE_MODEL", "claude-haiku-4-5"),
             max_tokens=300,
             messages=[{"role": "user", "content": msg}],
         )
@@ -284,7 +285,7 @@ def judge_with_anthropic(rows):
 judge_results = None
 
 if os.environ.get("OPENAI_API_KEY"):
-    print("Found OPENAI_API_KEY — running gpt-4o-mini judge")
+    print(f"Found OPENAI_API_KEY — running {os.environ.get('OPENAI_JUDGE_MODEL', 'gpt-5.6-terra')} judge")
     judge_results = judge_with_openai(rows)
 elif os.environ.get("ANTHROPIC_API_KEY"):
     print("Found ANTHROPIC_API_KEY — running claude-haiku judge")
@@ -332,7 +333,7 @@ summary(counter_safe, "Safety:", 4)
 # %% [markdown]
 # ## 7. Vibe-coding callout
 #
-# Mạnh nhất khi bạn cross-check với 2 judges (gpt-4o-mini + claude-haiku) — đó là
+# Mạnh nhất khi bạn cross-check với 2 judges (GPT-5.6 + Claude) — đó là
 # rigor add-on +4 trong rubric. Đặt cả `OPENAI_API_KEY` và `ANTHROPIC_API_KEY`,
 # duplicate cell §5 để chạy cả 2 judges, plot disagreement matrix.
 #

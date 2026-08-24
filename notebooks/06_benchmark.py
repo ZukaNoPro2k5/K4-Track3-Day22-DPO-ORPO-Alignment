@@ -155,7 +155,7 @@ torch.cuda.empty_cache()
 # %% [markdown]
 # ## 5. AlpacaEval-lite — Win-rate vs reference (judge-based)
 #
-# Mini AlpacaEval 2 LC. 100 prompts, generate from both adapters, judge with gpt-4o-mini or
+# Mini AlpacaEval 2 LC. 100 prompts, generate from both adapters, judge with GPT-5.6 or
 # claude-haiku. Pure preference-style — closest in spirit to what DPO trained on.
 #
 # Falls back to "skipped" if no API key. Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` to enable.
@@ -235,9 +235,10 @@ def judge_pair(a, b, prompt):
         from openai import OpenAI
         client = OpenAI()
         resp = client.chat.completions.create(
-            model=os.environ.get("JUDGE_MODEL", "gpt-4o-mini"),
+            model=os.environ.get(
+                "OPENAI_JUDGE_MODEL", os.environ.get("JUDGE_MODEL", "gpt-5.6-terra")
+            ),
             messages=[{"role": "user", "content": JUDGE_PROMPT.format(prompt=prompt, a=a, b=b)}],
-            temperature=0,
             response_format={"type": "json_object"},
         )
         try:
@@ -248,7 +249,7 @@ def judge_pair(a, b, prompt):
         from anthropic import Anthropic
         client = Anthropic()
         resp = client.messages.create(
-            model=os.environ.get("JUDGE_MODEL", "claude-haiku-4-5"),
+            model=os.environ.get("ANTHROPIC_JUDGE_MODEL", "claude-haiku-4-5"),
             max_tokens=200,
             messages=[{"role": "user", "content": JUDGE_PROMPT.format(prompt=prompt, a=a, b=b)}],
         )
