@@ -72,7 +72,10 @@ _→ Điền phân tích cụ thể dựa trên đồ thị thực tế của b�
 
 **Win/loss/tie summary:** _<điền sau khi chạy NB4, e.g., SFT+DPO wins 5/8, ties 2/8, loses 1/8>_
 
-**Judge used:** _<gpt-4o-mini | claude-haiku-4-5 | manual rubric>_
+**Primary judge:** _<GPT-5.6 Terra result from `judge_results_openai.json`>_
+
+**Rubric cross-judge:** `gpt-4o-mini` vs `claude-haiku-4-5` — disagreement
+_<điền từ `data/eval/cross_judge_nb4.json`>_. Nêu ít nhất một ví dụ hai judge không đồng ý.
 
 ---
 
@@ -95,6 +98,10 @@ Theo deck §3.3, β trong DPO đóng vai trò regularization strength — kiểm
 - **β = 0.5 (conservative):** Reward gap nhỏ hơn, model giữ closer to reference — ít alignment nhưng cũng ít risk degeneration. Phù hợp khi reference model đã tốt và chỉ cần fine-tune nhẹ.
 
 Hình dạng dự đoán của reward gap vs β: monotonic giảm (β tăng → gap giảm) nhưng với diminishing returns.
+
+**Phân tích số liệu thực tế (bắt buộc ≥ 100 từ để nhận +6):** _<Sau khi chạy, dùng
+`data/eval/beta_sweep_results.json` và `bonus-beta-sweep.png`; đối chiếu reward gap,
+win-rate và độ dài output ở cả ba beta. Không chỉ lặp lại phần dự đoán phía trên.>_
 
 ---
 
@@ -146,12 +153,22 @@ _→ Điền phân tích cụ thể dựa trên số liệu thực tế của b�
 ## Bonus
 
 - [ ] Đã làm β-sweep (rigor add-on +6)
+- [ ] Đã chạy MMLU full 14k và so với sampled-500 (+3)
 - [ ] Đã push lên HuggingFace Hub (Submission Option B, +5)
 - [ ] Đã release GGUF với multiple quantizations (+3)
 - [ ] Đã link W&B run public (+2)
 - [ ] Đã làm cross-judge comparison (+4)
 - [x] Đã làm `BONUS-CHALLENGE.md` provocation #4 — Mental Health VN Assistant (xem `bonus/`)
 - [ ] Pair work với: _<tên đồng đội nếu có>_
+
+**Artifact/link bonus:**
+
+- HF adapter + model card: _<URL>_
+- HF GGUF (Q4_K_M + Q5_K_M): _<URL>_
+- Public W&B run: _<URL từ `data/eval/wandb_runs.json`>_
+- MMLU full result: `data/eval/benchmark_results_mmlu_full.json`
+- NB4 disagreement: `data/eval/cross_judge_nb4.json`
+- AlpacaEval-lite disagreement: `data/eval/cross_judge_alpaca_lite.json`
 
 ---
 

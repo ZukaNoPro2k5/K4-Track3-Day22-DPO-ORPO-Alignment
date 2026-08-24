@@ -155,8 +155,9 @@ torch.cuda.empty_cache()
 # %% [markdown]
 # ## 5. AlpacaEval-lite — Win-rate vs reference (judge-based)
 #
-# Mini AlpacaEval 2 LC. 100 prompts, generate from both adapters, judge with GPT-5.6 or
-# claude-haiku. Pure preference-style — closest in spirit to what DPO trained on.
+# Mini AlpacaEval 2 LC. 100 prompts, generate from both adapters, use GPT-5.6 as the
+# primary judge and additionally run the rubric pair gpt-4o-mini + claude-haiku when
+# both provider keys exist. Pure preference-style — closest to what DPO trained on.
 #
 # Falls back to "skipped" if no API key. Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` to enable.
 
@@ -230,13 +231,15 @@ One-sentence justification.
 Output JSON: {{"winner": "A" | "B" | "tie", "reason": "..."}}"""
 
 
-def judge_pair(a, b, prompt):
-    if os.environ.get("OPENAI_API_KEY"):
+def judge_pair(a, b, prompt, provider):
+    if provider in {"openai", "openai_cross"}:
         from openai import OpenAI
         client = OpenAI()
         resp = client.chat.completions.create(
-            model=os.environ.get(
-                "OPENAI_JUDGE_MODEL", os.environ.get("JUDGE_MODEL", "gpt-5.6-terra")
+            model=(
+                os.environ.get("OPENAI_CROSS_JUDGE_MODEL", "gpt-4o-mini")
+                if provider == "openai_cross"
+                else os.environ.get("OPENAI_JUDGE_MODEL", "gpt-5.6-terra")
             ),
             messages=[{"role": "user", "content": JUDGE_PROMPT.format(prompt=prompt, a=a, b=b)}],
             response_format={"type": "json_object"},
@@ -245,7 +248,7 @@ def judge_pair(a, b, prompt):
             return json.loads(resp.choices[0].message.content)
         except Exception:
             return {"winner": "tie", "reason": "parse error"}
-    elif os.environ.get("ANTHROPIC_API_KEY"):
+    elif provider == "anthropic":
         from anthropic import Anthropic
         client = Anthropic()
         resp = client.messages.create(
@@ -261,38 +264,84 @@ def judge_pair(a, b, prompt):
 
 
 # %%
-import random
-
 if alpaca_prompts and (os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")):
     print(f">>> Generating SFT-only on {len(alpaca_prompts)} AlpacaEval-lite prompts")
     sft_outputs = generate_with_adapter(SFT_PATH, alpaca_prompts)
     print(f">>> Generating SFT+DPO")
     dpo_outputs = generate_with_adapter(DPO_PATH, alpaca_prompts)
 
-    print(f">>> Judging {len(alpaca_prompts)} pairs (random A/B order)")
-    judgments = []
-    for p, sft_out, dpo_out in zip(alpaca_prompts, sft_outputs, dpo_outputs):
-        flip = random.random() < 0.5
-        if flip:
-            j = judge_pair(dpo_out, sft_out, p["prompt"])
+    providers = [
+        name for name, key in (
+            ("openai", "OPENAI_API_KEY"),
+            ("openai_cross", "OPENAI_API_KEY"),
+            ("anthropic", "ANTHROPIC_API_KEY"),
+        ) if os.environ.get(key)
+    ]
+    provider_judgments = {}
+    provider_winrates = {}
+    for provider in providers:
+        print(f">>> Judging {len(alpaca_prompts)} pairs with {provider}")
+        judgments = []
+        for p, sft_out, dpo_out in zip(alpaca_prompts, sft_outputs, dpo_outputs):
+            # Stable A/B assignment makes provider disagreement directly comparable.
+            flip = int(p["id"]) % 2 == 0
+            a, b = (dpo_out, sft_out) if flip else (sft_out, dpo_out)
+            j = judge_pair(a, b, p["prompt"], provider)
             if j and j.get("winner") in ("A", "B"):
-                j["winner_model"] = "dpo" if j["winner"] == "A" else "sft"
-        else:
-            j = judge_pair(sft_out, dpo_out, p["prompt"])
-            if j and j.get("winner") in ("A", "B"):
-                j["winner_model"] = "sft" if j["winner"] == "A" else "dpo"
-        if j and j.get("winner") == "tie":
-            j["winner_model"] = "tie"
-        judgments.append(j or {"winner_model": "skipped"})
+                if flip:
+                    j["winner_model"] = "dpo" if j["winner"] == "A" else "sft"
+                else:
+                    j["winner_model"] = "sft" if j["winner"] == "A" else "dpo"
+            elif j and j.get("winner") == "tie":
+                j["winner_model"] = "tie"
+            j = j or {"winner_model": "skipped"}
+            j["id"] = p["id"]
+            judgments.append(j)
 
-    n_dpo = sum(1 for j in judgments if j.get("winner_model") == "dpo")
-    n_tie = sum(1 for j in judgments if j.get("winner_model") == "tie")
-    n_total = len(judgments)
-    alpaca_winrate = (n_dpo + 0.5 * n_tie) / n_total if n_total else 0.0
-    print(f"\nDPO win-rate: {n_dpo}/{n_total} wins, {n_tie} ties → {alpaca_winrate:.3f}")
+        n_dpo = sum(1 for j in judgments if j.get("winner_model") == "dpo")
+        n_tie = sum(1 for j in judgments if j.get("winner_model") == "tie")
+        n_total = len(judgments)
+        winrate = (n_dpo + 0.5 * n_tie) / n_total if n_total else 0.0
+        provider_judgments[provider] = judgments
+        provider_winrates[provider] = winrate
+        print(f"{provider} DPO win-rate: {n_dpo}/{n_total} wins, {n_tie} ties → {winrate:.3f}")
+        (EVAL_OUT / f"alpaca_lite_judgments_{provider}.json").write_text(
+            json.dumps(judgments, ensure_ascii=False, indent=2)
+        )
+
+    primary_provider = "openai" if "openai" in provider_judgments else providers[0]
+    judgments = provider_judgments[primary_provider]
+    alpaca_winrate = provider_winrates[primary_provider]
     (EVAL_OUT / "alpaca_lite_judgments.json").write_text(
         json.dumps(judgments, ensure_ascii=False, indent=2)
     )
+
+    if "openai_cross" in provider_judgments and "anthropic" in provider_judgments:
+        comparisons = []
+        for oa, an in zip(provider_judgments["openai_cross"], provider_judgments["anthropic"]):
+            comparisons.append({
+                "id": oa["id"],
+                "openai_winner_model": oa.get("winner_model"),
+                "anthropic_winner_model": an.get("winner_model"),
+                "disagree": oa.get("winner_model") != an.get("winner_model"),
+            })
+        disagreements = sum(row["disagree"] for row in comparisons)
+        cross_report = {
+            "n": len(comparisons),
+            "disagreements": disagreements,
+            "disagreement_rate": disagreements / len(comparisons) if comparisons else None,
+            "provider_winrates": provider_winrates,
+            "openai_model": os.environ.get("OPENAI_CROSS_JUDGE_MODEL", "gpt-4o-mini"),
+            "anthropic_model": os.environ.get("ANTHROPIC_JUDGE_MODEL", "claude-haiku-4-5"),
+            "comparisons": comparisons,
+        }
+        (EVAL_OUT / "cross_judge_alpaca_lite.json").write_text(
+            json.dumps(cross_report, ensure_ascii=False, indent=2)
+        )
+        print(
+            f"AlpacaEval cross-judge disagreement: {disagreements}/{len(comparisons)} "
+            f"({cross_report['disagreement_rate']:.1%})"
+        )
 else:
     print("⚠ No API key set, skipping AlpacaEval-lite. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.")
     alpaca_winrate = None

@@ -84,7 +84,15 @@ beta-sweep: ## Re-run NB3 with beta in {0.05, 0.1, 0.5}
 	@$(PY) scripts/train_dpo.py --beta 0.05 --output-dir adapters/dpo-b0.05
 	@$(PY) scripts/train_dpo.py --beta 0.1  --output-dir adapters/dpo-b0.10
 	@$(PY) scripts/train_dpo.py --beta 0.5  --output-dir adapters/dpo-b0.50
-	@$(PY) scripts/eval_judge.py --sweep-dir adapters --output submission/screenshots/bonus-beta-sweep.png
+	@$(PY) scripts/eval_beta_sweep.py --sweep-dir adapters --output submission/screenshots/bonus-beta-sweep.png
+
+mmlu-full: ## Bonus +3 — MMLU full 14k, cached per model
+	@$(PY) scripts/run_mmlu_full.py
+
+model-cards: ## Build Hub README cards from current run metrics
+	@$(PY) scripts/build_hf_model_cards.py
+
+all-bonus: deploy bench beta-sweep mmlu-full model-cards ## Execute every listed rigor add-on
 
 # ─────────────────────────────────────────────────────────────
 # Verify + clean
@@ -109,4 +117,4 @@ clean: ## Wipe adapters/, data/pref/, gguf/, __pycache__
 clean-all: clean ## Wipe everything including venv + HF cache
 	rm -rf $(VENV) ~/.cache/huggingface/hub
 
-.PHONY: help setup smoke sft data dpo eval deploy bench pipeline pipeline-full beta-sweep verify lab test clean clean-all
+.PHONY: help setup smoke sft data dpo eval deploy bench pipeline pipeline-full beta-sweep mmlu-full model-cards all-bonus verify lab test clean clean-all

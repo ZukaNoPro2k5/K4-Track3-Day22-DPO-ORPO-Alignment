@@ -94,6 +94,18 @@ def main():
     )
     train_result = trainer.train()
 
+    if os.environ.get("WANDB_API_KEY"):
+        import wandb
+
+        wandb_file = REPO / "data/eval/wandb_runs.json"
+        wandb_file.parent.mkdir(parents=True, exist_ok=True)
+        recorded = json.loads(wandb_file.read_text()) if wandb_file.exists() else {}
+        if wandb.run:
+            run_key = f"dpo_beta_{args.beta:g}"
+            recorded[run_key] = wandb.run.get_url()
+            wandb_file.write_text(json.dumps(recorded, indent=2))
+            print(f"W&B run: {recorded[run_key]}")
+
     trainer.model.save_pretrained(str(output))
     tokenizer.save_pretrained(str(output))
 

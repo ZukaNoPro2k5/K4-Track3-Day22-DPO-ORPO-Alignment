@@ -175,6 +175,17 @@ trainer = SFTTrainer(
 train_result = trainer.train()
 print(f"\nFinal train loss: {train_result.training_loss:.4f}")
 
+if REPORT_TO == "wandb":
+    import json
+    import wandb
+    wandb_file = REPO_ROOT / "data/eval/wandb_runs.json"
+    wandb_file.parent.mkdir(parents=True, exist_ok=True)
+    recorded = json.loads(wandb_file.read_text()) if wandb_file.exists() else {}
+    if wandb.run:
+        recorded["sft"] = wandb.run.get_url()
+        wandb_file.write_text(json.dumps(recorded, indent=2))
+        print(f"W&B SFT run: {recorded['sft']}")
+
 # %% [markdown]
 # ### 3a. Plot loss curve (deliverable: `02_sft_loss.png`)
 

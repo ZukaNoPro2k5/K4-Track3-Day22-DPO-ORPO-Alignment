@@ -227,7 +227,7 @@ Response B (SFT+DPO): {dpo}
 Output JSON: {{"winner": "A" | "B" | "tie", "justification": "<2 câu>"}}"""
 
 
-def judge_with_openai(rows):
+def judge_with_openai(model_name):
     try:
         from openai import OpenAI
     except ImportError:
@@ -239,9 +239,7 @@ def judge_with_openai(rows):
             prompt=p["prompt"], category=p["category"], sft=sft, dpo=dpo
         )
         resp = client.chat.completions.create(
-            model=os.environ.get(
-                "OPENAI_JUDGE_MODEL", os.environ.get("JUDGE_MODEL", "gpt-5.6-terra")
-            ),
+            model=model_name,
             messages=[{"role": "user", "content": msg}],
             response_format={"type": "json_object"},
         )
@@ -255,7 +253,7 @@ def judge_with_openai(rows):
     return results
 
 
-def judge_with_anthropic(rows):
+def judge_with_anthropic():
     try:
         from anthropic import Anthropic
     except ImportError:
@@ -283,13 +281,59 @@ def judge_with_anthropic(rows):
 
 # %%
 judge_results = None
+judge_runs = {}
 
 if os.environ.get("OPENAI_API_KEY"):
-    print(f"Found OPENAI_API_KEY — running {os.environ.get('OPENAI_JUDGE_MODEL', 'gpt-5.6-terra')} judge")
-    judge_results = judge_with_openai(rows)
-elif os.environ.get("ANTHROPIC_API_KEY"):
-    print("Found ANTHROPIC_API_KEY — running claude-haiku judge")
-    judge_results = judge_with_anthropic(rows)
+    model_name = os.environ.get("OPENAI_JUDGE_MODEL", "gpt-5.6-terra")
+    print(f"Found OPENAI_API_KEY — running {model_name} judge")
+    judge_runs["openai"] = judge_with_openai(model_name)
+    (EVAL_OUT / "judge_results_openai.json").write_text(
+        json.dumps(judge_runs["openai"], ensure_ascii=False, indent=2)
+    )
+    cross_model = os.environ.get("OPENAI_CROSS_JUDGE_MODEL", "gpt-4o-mini")
+    print(f"Running rubric cross-judge model: {cross_model}")
+    judge_runs["openai_cross"] = judge_with_openai(cross_model)
+    (EVAL_OUT / "judge_results_openai_cross.json").write_text(
+        json.dumps(judge_runs["openai_cross"], ensure_ascii=False, indent=2)
+    )
+
+if os.environ.get("ANTHROPIC_API_KEY"):
+    model_name = os.environ.get("ANTHROPIC_JUDGE_MODEL", "claude-haiku-4-5")
+    print(f"Found ANTHROPIC_API_KEY — running {model_name} judge")
+    judge_runs["anthropic"] = judge_with_anthropic()
+    (EVAL_OUT / "judge_results_anthropic.json").write_text(
+        json.dumps(judge_runs["anthropic"], ensure_ascii=False, indent=2)
+    )
+
+if "openai_cross" in judge_runs and "anthropic" in judge_runs:
+    comparisons = []
+    for oa, an in zip(judge_runs["openai_cross"], judge_runs["anthropic"]):
+        comparisons.append({
+            "id": oa["id"],
+            "category": oa["category"],
+            "openai_winner": oa.get("winner"),
+            "anthropic_winner": an.get("winner"),
+            "disagree": oa.get("winner") != an.get("winner"),
+        })
+    disagreements = sum(row["disagree"] for row in comparisons)
+    cross_report = {
+        "n": len(comparisons),
+        "disagreements": disagreements,
+        "disagreement_rate": disagreements / len(comparisons) if comparisons else None,
+        "comparisons": comparisons,
+        "openai_model": os.environ.get("OPENAI_CROSS_JUDGE_MODEL", "gpt-4o-mini"),
+        "anthropic_model": os.environ.get("ANTHROPIC_JUDGE_MODEL", "claude-haiku-4-5"),
+    }
+    (EVAL_OUT / "cross_judge_nb4.json").write_text(
+        json.dumps(cross_report, ensure_ascii=False, indent=2)
+    )
+    print(
+        f"Cross-judge disagreement: {disagreements}/{len(comparisons)} "
+        f"({cross_report['disagreement_rate']:.1%})"
+    )
+
+# Keep the historical output contract. OpenAI is the primary judge when both run.
+judge_results = judge_runs.get("openai") or judge_runs.get("anthropic")
 
 if judge_results is None:
     print("No API keys set. Falling back to manual rubric mode.")
@@ -333,9 +377,9 @@ summary(counter_safe, "Safety:", 4)
 # %% [markdown]
 # ## 7. Vibe-coding callout
 #
-# Mạnh nhất khi bạn cross-check với 2 judges (GPT-5.6 + Claude) — đó là
-# rigor add-on +4 trong rubric. Đặt cả `OPENAI_API_KEY` và `ANTHROPIC_API_KEY`,
-# duplicate cell §5 để chạy cả 2 judges, plot disagreement matrix.
+# Notebook đã tự chạy primary GPT-5.6 và cặp cross-judge đúng rubric
+# (`gpt-4o-mini` + `claude-haiku-4-5`) khi có cả hai API keys. Disagreement report
+# nằm tại `data/eval/cross_judge_nb4.json`.
 #
 # Hỏi cuối: có prompt nào *cả 2 judges* sai không? (Hint: prompt #8 — safety crisis.
 # Cả 2 judges có thể bias nhẹ về "thông cảm hơn" vs "đưa hotline" — bạn pick rubric

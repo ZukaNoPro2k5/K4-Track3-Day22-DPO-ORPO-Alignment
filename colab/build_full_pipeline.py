@@ -35,11 +35,11 @@ md("# 🚀 Lab 22 — DPO/ORPO Alignment: FULL PIPELINE (Run All)\n",
    "5. 📋 NB4: Side-by-side eval + judge\n",
    "6. 📦 NB5 (Bonus +6): Merge + GGUF export\n",
    "7. 📈 NB6 (Bonus +8): IFEval/GSM8K/MMLU/AlpacaEval benchmark\n",
-   "8. 🔬 β-sweep (Bonus +6): β ∈ {0.05, 0.1, 0.5}\n",
-   "9. 🧠 Bonus: Mental Health VN Domain DPO\n",
-   "10. 🤗 HuggingFace Hub Push (Bonus +5 Option B)\n",
-   "11. ✅ make verify (Submission gatekeeper)\n",
-   "12. 💾 Sync to Google Drive\n",
+   "8. 🔬 β-sweep (Bonus +6): reward gap + judged win-rate\n",
+   "9. 🧪 MMLU full 14k (+3) + OpenAI/Anthropic cross-judge (+4)\n",
+   "10. 🧠 Bonus: Mental Health VN Domain DPO\n",
+   "11. 🤗 Hub adapter/model card (+5), GGUF variants (+3), W&B (+2)\n",
+   "12. ✅ verify + sync to Google Drive\n",
    "\n",
    "> **Trước khi chạy:**\n",
    "> 1. Runtime → Change runtime type → **T4 GPU**\n",
@@ -54,9 +54,11 @@ code(
     "# 0a. Load secrets/config từ Colab Secrets; không bao giờ in giá trị key\n",
     "import os\n",
     "SECRET_KEYS = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'HF_TOKEN', 'WANDB_API_KEY']\n",
-    "CONFIG_KEYS = ['OPENAI_JUDGE_MODEL', 'ANTHROPIC_JUDGE_MODEL', 'JUDGE_MODEL',\n",
+    "CONFIG_KEYS = ['OPENAI_JUDGE_MODEL', 'OPENAI_CROSS_JUDGE_MODEL',\n",
+    "               'ANTHROPIC_JUDGE_MODEL', 'JUDGE_MODEL',\n",
     "               'HF_REPO', 'HF_GGUF_REPO', 'WANDB_PROJECT',\n",
-    "               'GITHUB_USER', 'GITHUB_REPO', 'DRIVE_OUT', 'BACKUP_GGUF_TO_DRIVE']\n",
+    "               'GITHUB_USER', 'GITHUB_REPO', 'DRIVE_OUT', 'BACKUP_GGUF_TO_DRIVE',\n",
+    "               'RUN_EXHAUSTIVE_BONUS']\n",
     "try:\n",
     "    from google.colab import userdata\n",
     "    for key in SECRET_KEYS + CONFIG_KEYS:\n",
@@ -152,6 +154,12 @@ code(
     "os.environ.setdefault('WANDB_PROJECT', 'lab22-dpo')\n",
     "if os.environ.get('WANDB_API_KEY'):\n",
     "    os.environ.setdefault('WANDB_MODE', 'online')\n",
+    "run_exhaustive = os.environ.get('RUN_EXHAUSTIVE_BONUS', '1').lower() not in {'0', 'false', 'no'}\n",
+    "if run_exhaustive:\n",
+    "    required_bonus_keys = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'HF_TOKEN', 'WANDB_API_KEY']\n",
+    "    missing = [key for key in required_bonus_keys if not os.environ.get(key)]\n",
+    "    if missing:\n",
+    "        raise RuntimeError('Exhaustive bonus mode needs Colab Secrets: ' + ', '.join(missing))\n",
     "\n",
     "def run_step(label, *args, check=True):\n",
     "    print(f'\\n=== {label} ===', flush=True)\n",
@@ -280,6 +288,21 @@ code(
     "        print(f'   {name:18s}  SFT={scores[\"sft\"]:.3f}  DPO={scores[\"dpo\"]:.3f}  Δ={d} {arrow}')\n",
 )
 
+md(
+    "### MMLU full coverage 14k (Bonus +3; long-running, resumable by completed model)\n",
+    "\n",
+    "> Set `RUN_EXHAUSTIVE_BONUS=0` in Colab Secrets only when you need a shorter core run.\n",
+)
+
+code(
+    "# Full MMLU is deliberately separate from sampled NB6; completed SFT/DPO halves are cached.\n",
+    "run_exhaustive = os.environ.get('RUN_EXHAUSTIVE_BONUS', '1').lower() not in {'0', 'false', 'no'}\n",
+    "if run_exhaustive:\n",
+    "    run_step('MMLU full 14k — SFT vs DPO', 'scripts/run_mmlu_full.py')\n",
+    "else:\n",
+    "    print('RUN_EXHAUSTIVE_BONUS=0 — skipping full MMLU only')\n",
+)
+
 # ─── BETA SWEEP ─────────────────────────────────────────────────────────────
 md("---\n", "## 🔬 β-sweep Mini-Experiment (Bonus +6)\n")
 
@@ -289,8 +312,8 @@ code(
     "run_step('beta=0.10', 'scripts/train_dpo.py', '--beta', '0.1', '--output-dir', 'adapters/dpo-b0.10')\n",
     "run_step('beta=0.50', 'scripts/train_dpo.py', '--beta', '0.5', '--output-dir', 'adapters/dpo-b0.50')\n",
     "\n",
-    "# Plot beta sweep\n",
-    "run_step('beta sweep plot', 'scripts/eval_judge.py', '--sweep-dir', 'adapters',\n",
+    "# Evaluate the same 8 prompts for each beta and plot reward gap + win-rate.\n",
+    "run_step('beta sweep eval + plot', 'scripts/eval_beta_sweep.py', '--sweep-dir', 'adapters',\n",
     "         '--output', 'submission/screenshots/bonus-beta-sweep.png')\n",
 )
 
@@ -337,6 +360,9 @@ code(
 md("---\n", "## 🤗 HuggingFace Hub Push (Bonus Option B +5 pts)\n")
 
 code(
+    "# Build README model cards from real run metrics before upload.\n",
+    "run_step('build Hugging Face model cards', 'scripts/build_hf_model_cards.py')\n",
+    "\n",
     "# HuggingFace Hub Push (nếu HF_TOKEN có); token không đi qua command line\n",
     "import os\n",
     "from pathlib import Path\n",
