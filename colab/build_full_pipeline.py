@@ -82,6 +82,8 @@ code(
     "# 0c. Set COMPUTE_TIER, probe GPU\n",
     "import os, torch\n",
     "os.environ['COMPUTE_TIER'] = 'T4'\n",
+    "# Lab coach recommended dataset (higher quality native VN, same Alpaca format)\n",
+    "os.environ['SFT_DATASET'] = 'bkai-foundation-models/vi-alpaca'\n",
     "assert torch.cuda.is_available(), 'Enable GPU: Runtime → Change runtime type → T4 GPU'\n",
     "gpu = torch.cuda.get_device_properties(0)\n",
     "VRAM_GB = gpu.total_memory / 1e9\n",

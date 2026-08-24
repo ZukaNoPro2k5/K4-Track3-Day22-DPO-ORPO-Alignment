@@ -41,7 +41,10 @@ else:  # BIGGPU
     PER_DEVICE_BATCH = 2
     GRAD_ACCUM = 4
 
-SFT_DATASET = os.environ.get("SFT_DATASET", "5CD-AI/Vietnamese-alpaca-cleaned")
+SFT_DATASET = os.environ.get("SFT_DATASET", "bkai-foundation-models/vi-alpaca")
+# ^ Lab coach recommended: bkai-foundation-models/vi-alpaca
+#   Higher quality than 5CD-AI/Vietnamese-alpaca-cleaned (native VN, not translated)
+#   Same Alpaca format (instruction / input / output) — zero code changes needed.
 SFT_SLICE = 1000
 NUM_EPOCHS = 1
 
