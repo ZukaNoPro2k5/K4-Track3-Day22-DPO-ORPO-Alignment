@@ -51,6 +51,9 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    if not tokenizer.chat_template:
+        from unsloth.chat_templates import get_chat_template
+        tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
 
     def fmt(row):
         prompt_msgs = [{"role": "user", "content": row["prompt"]}]

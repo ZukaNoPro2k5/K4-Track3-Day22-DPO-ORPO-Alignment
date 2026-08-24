@@ -88,6 +88,10 @@ model, tokenizer = FastLanguageModel.from_pretrained(
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
     print("Set tokenizer.pad_token = eos_token")
+if not tokenizer.chat_template:
+    from unsloth.chat_templates import get_chat_template
+    tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
+    print("Set Qwen2.5 chat template")
 
 # %%
 model = FastLanguageModel.get_peft_model(

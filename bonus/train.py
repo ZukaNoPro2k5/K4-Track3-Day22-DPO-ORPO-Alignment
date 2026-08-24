@@ -61,6 +61,9 @@ def create_parquet_from_pairs():
     tokenizer = AutoTokenizer.from_pretrained(SFT_PATH)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    if not tokenizer.chat_template:
+        from unsloth.chat_templates import get_chat_template
+        tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
 
     rows = []
     for pair in all_pairs:
@@ -99,6 +102,9 @@ def train_dpo_bonus(ds):
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    if not tokenizer.chat_template:
+        from unsloth.chat_templates import get_chat_template
+        tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
 
     model = PeftModel.from_pretrained(model, str(SFT_PATH), is_trainable=True)
     model.enable_input_require_grads()

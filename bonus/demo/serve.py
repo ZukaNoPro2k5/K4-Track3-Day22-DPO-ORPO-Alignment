@@ -87,6 +87,9 @@ def load_model():
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=BASE_MODEL, max_seq_length=512, dtype=None, load_in_4bit=True
         )
+        if not tokenizer.chat_template:
+            from unsloth.chat_templates import get_chat_template
+            tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
         model = PeftModel.from_pretrained(model, str(ADAPTER_PATH))
         FastLanguageModel.for_inference(model)
         print(f"✓ Loaded HF adapter: {ADAPTER_PATH}")
@@ -101,6 +104,9 @@ def load_model():
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=BASE_MODEL, max_seq_length=512, dtype=None, load_in_4bit=True
     )
+    if not tokenizer.chat_template:
+        from unsloth.chat_templates import get_chat_template
+        tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
     FastLanguageModel.for_inference(model)
     return "hf_base", (model, tokenizer)
 
