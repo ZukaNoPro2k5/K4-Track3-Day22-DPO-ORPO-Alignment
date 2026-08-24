@@ -35,6 +35,10 @@ jupytext>=1.16,<2.0
 # ── Optional API judges (notebook 04) — pulled if you set API keys ──
 openai>=1.55,<2.0                       # gpt-4o-mini judge
 anthropic>=0.40,<1.0                    # claude-haiku judge
+python-dotenv>=1.0,<2.0                 # load local .env without committing secrets
+wandb>=0.18,<1.0                        # optional experiment tracking
+gradio>=4.0,<5.0                        # optional bonus demo
+huggingface_hub>=0.24                   # optional adapter/GGUF upload
 
 # ── Test ──────────────────────────────────────────────────────
 pytest>=8.3,<9.0

@@ -42,6 +42,7 @@ else:
 BETA = float(os.environ.get("DPO_BETA", "0.1"))
 LR = float(os.environ.get("DPO_LR", "5e-7"))
 EPOCHS = int(os.environ.get("DPO_EPOCHS", "1"))
+REPORT_TO = "wandb" if os.environ.get("WANDB_API_KEY") else "none"
 
 REPO_ROOT = Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()
 SFT_PATH = REPO_ROOT / "adapters" / "sft-mini"
@@ -70,16 +71,17 @@ assert torch.cuda.is_available(), "DPO needs a CUDA GPU. See HARDWARE-GUIDE.md."
 # ## 1. Load policy + reference (the VRAM story)
 #
 # **Critical:** DPO scores each answer under the policy (trainable) AND a frozen
-# reference. With PEFT we do **not** load a second model -- TRL toggles the LoRA
-# adapter *off* to get the reference forward pass on the same 4-bit base. The
-# extra VRAM vs SFT comes from two forward passes + holding chosen AND rejected
-# sequences, not from a second copy of the weights.
+# reference. With `ref_model=None`, TRL derives the initial policy as the frozen
+# reference while optimizing the trainable PEFT policy. The extra VRAM vs SFT
+# comes mainly from two forward passes plus chosen and rejected activations.
 
 # %%
 from unsloth import FastLanguageModel
 from peft import PeftModel
 
-# Policy — gets new DPO LoRA adapter on top of SFT LoRA
+# Continue training the SFT LoRA with the DPO objective. Saving this adapter
+# therefore produces one self-contained SFT+DPO adapter that can be loaded on
+# the original base model for evaluation and export.
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=BASE_MODEL,
     max_seq_length=MAX_LEN,
@@ -91,33 +93,14 @@ if tokenizer.pad_token is None:
 
 # Load SFT adapter on top of base
 model = PeftModel.from_pretrained(model, str(SFT_PATH), is_trainable=True)
-print(f"Policy: {model.__class__.__name__} with SFT adapter loaded")
-
-# %%
-# Wrap policy with NEW LoRA adapter for DPO updates (don't merge SFT — keep stacked)
-# Unsloth re-applies LoRA on top of the existing PeftModel.
-model = FastLanguageModel.get_peft_model(
-    model,
-    r=16,
-    lora_alpha=32,
-    lora_dropout=0.0,
-    bias="none",
-    target_modules=[
-        "q_proj", "k_proj", "v_proj", "o_proj",
-        "gate_proj", "up_proj", "down_proj",
-    ],
-    use_gradient_checkpointing="unsloth",
-    random_state=42,
-    use_rslora=False,
-    loftq_config=None,
-)
-print(f"Trainable params (DPO LoRA): {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
+model.enable_input_require_grads()
+print(f"Policy: {model.__class__.__name__} with trainable SFT adapter loaded")
+print(f"Trainable params: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
 
 # %% [markdown]
-# > **Why no separate `ref_model=` argument?** Modern TRL (≥ 0.12) auto-detects
-# > PEFT models and uses the *base model without the adapter* as the reference.
-# > That's the same memory layout: 1 base + 2 adapter sets in VRAM. No deepcopy
-# > needed.
+# > **Why no separate `ref_model=` argument?** TRL derives a frozen reference
+# > from the policy state at trainer initialization, avoiding a second explicit
+# > 4-bit model allocation.
 
 # %% [markdown]
 # ## 2. Build DPOConfig (deck §5.2 hyperparameters)
@@ -143,7 +126,8 @@ dpo_config = DPOConfig(
     fp16=not torch.cuda.is_bf16_supported(),
     seed=42,
     loss_type="sigmoid",         # DPO standard (alternatives: ipo, hinge, kto)
-    report_to="none",
+    report_to=REPORT_TO,
+    run_name=f"lab22-dpo-{COMPUTE_TIER.lower()}-b{BETA}",
 )
 
 print(f"DPOConfig: beta={dpo_config.beta}  lr={dpo_config.learning_rate}  loss_type={dpo_config.loss_type}")
@@ -166,7 +150,7 @@ from trl import DPOTrainer
 
 trainer = DPOTrainer(
     model=model,
-    ref_model=None,                # auto-derived from PEFT base
+    ref_model=None,                # frozen initial policy derived by TRL
     args=dpo_config,
     train_dataset=pref_ds,
     processing_class=tokenizer,

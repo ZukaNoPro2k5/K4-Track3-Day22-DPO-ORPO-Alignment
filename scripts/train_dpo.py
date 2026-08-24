@@ -48,10 +48,10 @@ def main():
     print(f"Output:     {output}")
 
     import torch
+    from unsloth import FastLanguageModel
     from datasets import Dataset
     from peft import PeftModel
     from trl import DPOConfig, DPOTrainer
-    from unsloth import FastLanguageModel
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=base_model, max_seq_length=max_len, dtype=None, load_in_4bit=True,
@@ -59,14 +59,11 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # Continue the existing SFT LoRA so the saved adapter is directly usable as
+    # base + SFT+DPO. Creating a second unnamed LoRA here loses the SFT stage at
+    # inference/export time.
     model = PeftModel.from_pretrained(model, args.sft_path, is_trainable=True)
-    model = FastLanguageModel.get_peft_model(
-        model, r=16, lora_alpha=32, lora_dropout=0.0, bias="none",
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                        "gate_proj", "up_proj", "down_proj"],
-        use_gradient_checkpointing="unsloth",
-        random_state=42, use_rslora=False, loftq_config=None,
-    )
+    model.enable_input_require_grads()
 
     config = DPOConfig(
         output_dir=str(output.parent / f"{output.name}-checkpoints"),
@@ -86,7 +83,8 @@ def main():
         fp16=not torch.cuda.is_bf16_supported(),
         seed=42,
         loss_type="sigmoid",
-        report_to="none",
+        report_to="wandb" if os.environ.get("WANDB_API_KEY") else "none",
+        run_name=f"lab22-dpo-sweep-{tier.lower()}-b{args.beta}",
     )
 
     pref = Dataset.from_parquet(args.pref_path)

@@ -8,6 +8,12 @@ JUPYTEXT := $(VENV)/bin/jupytext
 PYTEST   := $(VENV)/bin/pytest
 JUPYTER  := $(VENV)/bin/jupyter
 
+# Load project configuration for local `make` commands. `.env` is gitignored.
+ifneq (,$(wildcard .env))
+  include .env
+  export
+endif
+
 # If running on Colab there's no venv — fall back to system python.
 ifeq ($(wildcard $(PY)),)
   PY := python

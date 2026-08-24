@@ -47,6 +47,7 @@ SFT_DATASET = os.environ.get("SFT_DATASET", "bkai-foundation-models/vi-alpaca")
 #   Same Alpaca format (instruction / input / output) — zero code changes needed.
 SFT_SLICE = 1000
 NUM_EPOCHS = 1
+REPORT_TO = "wandb" if os.environ.get("WANDB_API_KEY") else "none"
 
 REPO_ROOT = Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()
 ADAPTER_OUT = REPO_ROOT / "adapters" / "sft-mini"
@@ -159,7 +160,8 @@ sft_config = SFTConfig(
     seed=42,
     max_length=MAX_LEN,
     dataset_text_field="text",
-    report_to="none",
+    report_to=REPORT_TO,
+    run_name=f"lab22-sft-{COMPUTE_TIER.lower()}",
 )
 
 trainer = SFTTrainer(

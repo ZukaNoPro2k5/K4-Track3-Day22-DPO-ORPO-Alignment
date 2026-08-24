@@ -43,7 +43,7 @@ md("# 🚀 Lab 22 — DPO/ORPO Alignment: FULL PIPELINE (Run All)\n",
    "\n",
    "> **Trước khi chạy:**\n",
    "> 1. Runtime → Change runtime type → **T4 GPU**\n",
-   "> 2. Thêm Secrets (biểu tượng 🔑 bên trái): `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `HF_TOKEN`, `WANDB_API_KEY`\n",
+   "> 2. Trong Colab/VS Code: thêm `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `HF_TOKEN`, `WANDB_API_KEY` vào **Colab Secrets**. Khi chạy local, copy `.env.example` thành `.env`.\n",
    "> 3. Runtime → Run all (`Ctrl+F9`)\n",
 )
 
@@ -51,18 +51,23 @@ md("# 🚀 Lab 22 — DPO/ORPO Alignment: FULL PIPELINE (Run All)\n",
 md("---\n", "## ⚙️ Section 0: Secrets, Environment & Google Drive\n")
 
 code(
-    "# 0a. Load secrets từ Colab Secrets (nếu có)\n",
+    "# 0a. Load secrets/config từ Colab Secrets; không bao giờ in giá trị key\n",
     "import os\n",
+    "SECRET_KEYS = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'HF_TOKEN', 'WANDB_API_KEY']\n",
+    "CONFIG_KEYS = ['JUDGE_MODEL', 'HF_REPO', 'HF_GGUF_REPO', 'WANDB_PROJECT',\n",
+    "               'GITHUB_USER', 'GITHUB_REPO', 'DRIVE_OUT', 'BACKUP_GGUF_TO_DRIVE']\n",
     "try:\n",
     "    from google.colab import userdata\n",
-    "    for key in ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'HF_TOKEN', 'WANDB_API_KEY']:\n",
+    "    for key in SECRET_KEYS + CONFIG_KEYS:\n",
     "        try:\n",
-    "            os.environ[key] = userdata.get(key)\n",
-    "            print(f'✓ {key} loaded')\n",
-    "        except:\n",
-    "            print(f'⚠ {key} not found in secrets — some bonus features will be skipped')\n",
+    "            value = userdata.get(key)\n",
+    "        except Exception:\n",
+    "            value = None\n",
+    "        if value:\n",
+    "            os.environ[key] = value\n",
+    "    print('Colab Secrets loaded: ' + ', '.join(k for k in SECRET_KEYS if os.environ.get(k)))\n",
     "except ImportError:\n",
-    "    print('Not on Colab — reading from environment')\n",
+    "    print('Not on Colab — will load local .env after the repo is available')\n",
 )
 
 code(
@@ -70,20 +75,22 @@ code(
     "try:\n",
     "    from google.colab import drive\n",
     "    drive.mount('/content/drive')\n",
-    "    DRIVE_OUT = '/content/drive/MyDrive/Lab22_DPO_artifacts'\n",
+    "    DRIVE_OUT = os.environ.get('DRIVE_OUT', '/content/drive/MyDrive/Lab22_DPO_artifacts')\n",
     "    os.makedirs(DRIVE_OUT, exist_ok=True)\n",
+    "    os.environ['DRIVE_OUT'] = DRIVE_OUT\n",
     "    print(f'✓ Google Drive mounted → {DRIVE_OUT}')\n",
     "except Exception as e:\n",
     "    print(f'Drive mount skipped: {e}')\n",
     "    DRIVE_OUT = None\n",
+    "    os.environ.pop('DRIVE_OUT', None)\n",
 )
 
 code(
     "# 0c. Set COMPUTE_TIER, probe GPU\n",
     "import os, torch\n",
-    "os.environ['COMPUTE_TIER'] = 'T4'\n",
+    "os.environ.setdefault('COMPUTE_TIER', 'T4')\n",
     "# Lab coach recommended dataset (higher quality native VN, same Alpaca format)\n",
-    "os.environ['SFT_DATASET'] = 'bkai-foundation-models/vi-alpaca'\n",
+    "os.environ.setdefault('SFT_DATASET', 'bkai-foundation-models/vi-alpaca')\n",
     "assert torch.cuda.is_available(), 'Enable GPU: Runtime → Change runtime type → T4 GPU'\n",
     "gpu = torch.cuda.get_device_properties(0)\n",
     "VRAM_GB = gpu.total_memory / 1e9\n",
@@ -106,9 +113,9 @@ code(
 
 # ─── SECTION 0e: CLONE REPO & INSTALL ──────────────────────────────────────
 code(
-    "# 0e. Clone repo (replace <your-username> với GitHub username của bạn)\n",
-    "GITHUB_USER = 'ZukaNoPro2k5'  # ← đổi thành username của bạn\n",
-    "REPO_NAME = 'K4-Track3-Day22-DPO-ORPO-Alignment'\n",
+    "# 0e. Clone đúng repo đã cấu hình\n",
+    "GITHUB_USER = os.environ.get('GITHUB_USER', 'ZukaNoPro2k5')\n",
+    "REPO_NAME = os.environ.get('GITHUB_REPO', 'K4-Track3-Day22-DPO-ORPO-Alignment')\n",
     "import subprocess, os, shutil\n",
     "if WORK.exists():\n",
     "    shutil.rmtree(WORK)\n",
@@ -126,20 +133,44 @@ code(
 )
 
 code(
-    "# 0f. Install all dependencies (3-5 min)\n",
-    "import subprocess\n",
+    "# 0f. Install dependencies từ source-of-truth requirements.txt (3-8 min)\n",
+    "import subprocess, sys\n",
     "print('Installing dependencies... (~3-5 min)')\n",
-    "subprocess.run([\n",
-    "    'pip', 'install', '-q',\n",
-    "    'unsloth>=2025.10,<2026.5', 'trl>=0.12,<0.20', 'peft>=0.13,<1.0',\n",
-    "    'bitsandbytes>=0.44,<1.0', 'datasets>=3.1,<4.0', 'accelerate>=1.1,<2.0',\n",
-    "    'jupytext>=1.16,<2.0',\n",
-    "    'llama-cpp-python>=0.3,<1.0', 'lm-eval[ifeval,math]>=0.4.5,<1.0',\n",
-    "    'matplotlib>=3.9,<4.0', 'pandas>=2.2,<3.0', 'pyarrow>=17,<22',\n",
-    "    'openai>=1.55,<2.0', 'anthropic>=0.40,<1.0',\n",
-    "    'gradio>=4.0,<5.0', 'huggingface_hub>=0.24',\n",
-    "], check=True)\n",
+    "subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', '-r',\n",
+    "                str(WORK / 'requirements.txt')], check=True)\n",
     "print('✓ All packages installed')\n",
+)
+
+code(
+    "# 0g. Load optional repo .env, validate config, and define fail-fast runner\n",
+    "import os, subprocess, sys\n",
+    "from dotenv import load_dotenv\n",
+    "load_dotenv(WORK / '.env', override=False)  # local/server-mounted file only\n",
+    "os.environ.setdefault('SFT_DATASET', 'bkai-foundation-models/vi-alpaca')\n",
+    "os.environ.setdefault('PREF_DATASET', 'argilla/ultrafeedback-binarized-preferences-cleaned')\n",
+    "os.environ.setdefault('WANDB_PROJECT', 'lab22-dpo')\n",
+    "if os.environ.get('WANDB_API_KEY'):\n",
+    "    os.environ.setdefault('WANDB_MODE', 'online')\n",
+    "\n",
+    "def run_step(label, *args, check=True):\n",
+    "    print(f'\\n=== {label} ===', flush=True)\n",
+    "    result = subprocess.run([sys.executable, *args], cwd=WORK, env=os.environ.copy())\n",
+    "    if check and result.returncode != 0:\n",
+    "        raise RuntimeError(f'{label} failed with exit code {result.returncode}')\n",
+    "    return result.returncode\n",
+    "\n",
+    "print(f\"SFT_DATASET={os.environ['SFT_DATASET']}\")\n",
+    "print(f\"PREF_DATASET={os.environ['PREF_DATASET']}\")\n",
+    "print('Enabled integrations: ' + (', '.join(k for k in SECRET_KEYS if os.environ.get(k)) or 'none'))\n",
+    "\n",
+    "# Fail early on an incompatible environment instead of after training starts.\n",
+    "import shutil, torch\n",
+    "free_gb = shutil.disk_usage('/content').free / 1024**3\n",
+    "assert torch.cuda.is_available(), 'CUDA unavailable'\n",
+    "assert free_gb >= 20, f'Need at least 20 GB free disk; only {free_gb:.1f} GB available'\n",
+    "import unsloth, trl, peft, datasets, bitsandbytes\n",
+    "print(f'Preflight OK: torch={torch.__version__}, trl={trl.__version__}, peft={peft.__version__}')\n",
+    "print(f'Free disk: {free_gb:.1f} GB')\n",
 )
 
 # ─── NB1 ────────────────────────────────────────────────────────────────────
@@ -151,7 +182,7 @@ code(
     "os.environ.setdefault('COMPUTE_TIER', 'T4')\n",
     "os.environ.setdefault('SFT_DATASET', 'bkai-foundation-models/vi-alpaca')\n",
     "\n",
-    "!cd /content/lab22 && python notebooks/01_sft_mini.py\n",
+    "run_step('NB1 — SFT mini', 'notebooks/01_sft_mini.py')\n",
 )
 
 code(
@@ -172,7 +203,7 @@ md("---\n", "## 📊 NB2 — Preference Data Prep (~2 min)\n")
 
 code(
     "# NB2: Run notebook 2 — preference data\n",
-    "!cd /content/lab22 && python notebooks/02_preference_data.py\n",
+    "run_step('NB2 — preference data', 'notebooks/02_preference_data.py')\n",
 )
 
 # ─── NB3 ────────────────────────────────────────────────────────────────────
@@ -180,7 +211,7 @@ md("---\n", "## 🎯 NB3 — DPO Training (~15-20 min T4)\n")
 
 code(
     "# NB3: Run notebook 3 — DPO training\n",
-    "!cd /content/lab22 && python notebooks/03_dpo_train.py\n",
+    "run_step('NB3 — DPO training', 'notebooks/03_dpo_train.py')\n",
     "\n",
     "import json\n",
     "try:\n",
@@ -195,7 +226,7 @@ md("---\n", "## 📋 NB4 — Side-by-Side Eval + Judge (~3-5 min)\n")
 
 code(
     "# NB4: Run notebook 4 — compare and eval\n",
-    "!cd /content/lab22 && python notebooks/04_compare_and_eval.py\n",
+    "run_step('NB4 — compare and judge', 'notebooks/04_compare_and_eval.py')\n",
     "\n",
     "import json\n",
     "from collections import Counter\n",
@@ -211,7 +242,7 @@ md("---\n", "## 📦 NB5 — Merge + GGUF Export (Bonus +6)\n")
 
 code(
     "# NB5: Merge adapter + export GGUF Q4_K_M\n",
-    "!cd /content/lab22 && python notebooks/05_merge_deploy_gguf.py\n",
+    "run_step('NB5 — merge and Q4 GGUF', 'notebooks/05_merge_deploy_gguf.py')\n",
     "\n",
     "from pathlib import Path\n",
     "for f in Path('/content/lab22/gguf').glob('*.gguf'):\n",
@@ -220,7 +251,8 @@ code(
 
 code(
     "# NB5 extra: Export Q5_K_M + Q8_0 (Bonus GGUF release +3 pts)\n",
-    "!cd /content/lab22 && python scripts/merge_and_gguf.py --quant q5_k_m --quant q8_0\n",
+    "run_step('NB5 extra — Q5 and Q8 GGUF', 'scripts/merge_and_gguf.py',\n",
+    "         '--quant', 'q5_k_m', '--quant', 'q8_0')\n",
 )
 
 # ─── NB6 ────────────────────────────────────────────────────────────────────
@@ -230,7 +262,7 @@ code(
     "# NB6: IFEval / GSM8K / MMLU / AlpacaEval-lite benchmark\n",
     "import os\n",
     "os.environ['HF_DATASETS_TRUST_REMOTE_CODE'] = '1'\n",
-    "!cd /content/lab22 && python notebooks/06_benchmark.py\n",
+    "run_step('NB6 — benchmark suite', 'notebooks/06_benchmark.py')\n",
     "\n",
     "import json\n",
     "from pathlib import Path\n",
@@ -249,12 +281,13 @@ md("---\n", "## 🔬 β-sweep Mini-Experiment (Bonus +6)\n")
 
 code(
     "# Beta-sweep: train DPO 3 lần với beta ∈ {0.05, 0.1, 0.5}\n",
-    "!cd /content/lab22 && python scripts/train_dpo.py --beta 0.05 --output-dir adapters/dpo-b0.05\n",
-    "!cd /content/lab22 && python scripts/train_dpo.py --beta 0.1 --output-dir adapters/dpo-b0.10\n",
-    "!cd /content/lab22 && python scripts/train_dpo.py --beta 0.5 --output-dir adapters/dpo-b0.50\n",
+    "run_step('beta=0.05', 'scripts/train_dpo.py', '--beta', '0.05', '--output-dir', 'adapters/dpo-b0.05')\n",
+    "run_step('beta=0.10', 'scripts/train_dpo.py', '--beta', '0.1', '--output-dir', 'adapters/dpo-b0.10')\n",
+    "run_step('beta=0.50', 'scripts/train_dpo.py', '--beta', '0.5', '--output-dir', 'adapters/dpo-b0.50')\n",
     "\n",
     "# Plot beta sweep\n",
-    "!cd /content/lab22 && python scripts/eval_judge.py --sweep-dir adapters --output submission/screenshots/bonus-beta-sweep.png\n",
+    "run_step('beta sweep plot', 'scripts/eval_judge.py', '--sweep-dir', 'adapters',\n",
+    "         '--output', 'submission/screenshots/bonus-beta-sweep.png')\n",
 )
 
 # ─── BONUS DOMAIN ────────────────────────────────────────────────────────────
@@ -262,7 +295,7 @@ md("---\n", "## 🧠 Bonus: Mental Health VN Domain DPO (~10 min)\n")
 
 code(
     "# Bonus domain: train DPO trên 200 preference pairs tiếng Việt\n",
-    "!cd /content/lab22 && python bonus/train.py\n",
+    "run_step('bonus mental-health DPO', 'bonus/train.py')\n",
 )
 
 code(
@@ -280,22 +313,28 @@ code(
     "print('2. Test vài prompt tiếng Việt')\n",
     "print('3. Chụp màn hình')\n",
     "\n",
-    "import subprocess, signal, os\n",
+    "import subprocess, os\n",
     "proc = subprocess.Popen(\n",
     "    ['python', str(WORK / 'bonus/demo/serve.py')],\n",
     "    cwd=WORK, env={**os.environ, 'PORT': '7860'}\n",
     ")\n",
-    "time.sleep(60)\n",
-    "proc.terminate()\n",
-    "print('Demo stopped.')\n",
+    "try:\n",
+    "    time.sleep(60)\n",
+    "finally:\n",
+    "    proc.terminate()\n",
+    "    try:\n",
+    "        proc.wait(timeout=10)\n",
+    "    except subprocess.TimeoutExpired:\n",
+    "        proc.kill()\n",
+    "    print('Demo stopped.')\n",
 )
 
 # ─── HUGGINGFACE PUSH ────────────────────────────────────────────────────────
 md("---\n", "## 🤗 HuggingFace Hub Push (Bonus Option B +5 pts)\n")
 
 code(
-    "# HuggingFace Hub Push (nếu HF_TOKEN có)\n",
-    "import os, subprocess\n",
+    "# HuggingFace Hub Push (nếu HF_TOKEN có); token không đi qua command line\n",
+    "import os\n",
     "from pathlib import Path\n",
     "WORK = Path('/content/lab22')\n",
     "\n",
@@ -303,35 +342,27 @@ code(
     "if not HF_TOKEN:\n",
     "    print('⚠ HF_TOKEN not set — skipping HuggingFace push (Bonus +5). Add to Colab Secrets.')\n",
     "else:\n",
-    "    # Login\n",
-    "    subprocess.run(['huggingface-cli', 'login', '--token', HF_TOKEN], check=True)\n",
+    "    from huggingface_hub import HfApi\n",
+    "    try:\n",
+    "        api = HfApi(token=HF_TOKEN)\n",
+    "        user = api.whoami()['name']\n",
+    "        print(f'Logged in as: {user}')\n",
+    "        repo_dpo = os.environ.get('HF_REPO') or f'{user}/lab22-dpo-qwen3b-vn'\n",
+    "        api.create_repo(repo_dpo, repo_type='model', exist_ok=True)\n",
+    "        api.upload_folder(repo_id=repo_dpo, repo_type='model',\n",
+    "                          folder_path=str(WORK / 'adapters/dpo'))\n",
+    "        print(f'✓ DPO adapter pushed to https://huggingface.co/{repo_dpo}')\n",
     "\n",
-    "    # Lấy HF username\n",
-    "    from huggingface_hub import whoami\n",
-    "    user = whoami()['name']\n",
-    "    print(f'Logged in as: {user}')\n",
-    "\n",
-    "    # Push DPO adapter\n",
-    "    REPO_DPO = f'{user}/lab22-dpo-qwen3b-vn'\n",
-    "    subprocess.run([\n",
-    "        'huggingface-cli', 'upload', REPO_DPO,\n",
-    "        str(WORK / 'adapters/dpo'), './',\n",
-    "        '--repo-type', 'model'\n",
-    "    ], check=True)\n",
-    "    print(f'✓ DPO adapter pushed to https://huggingface.co/{REPO_DPO}')\n",
-    "\n",
-    "    # Push GGUF (nếu có)\n",
-    "    gguf_files = list((WORK / 'gguf').glob('*.gguf'))\n",
-    "    if gguf_files:\n",
-    "        REPO_GGUF = f'{user}/lab22-dpo-qwen3b-vn-gguf'\n",
-    "        subprocess.run([\n",
-    "            'huggingface-cli', 'upload', REPO_GGUF,\n",
-    "            str(WORK / 'gguf'), './',\n",
-    "            '--repo-type', 'model'\n",
-    "        ], check=True)\n",
-    "        print(f'✓ GGUF files pushed to https://huggingface.co/{REPO_GGUF}')\n",
-    "\n",
-    "    print(f'\\nAdd these links to submission/REFLECTION.md!')\n",
+    "        gguf_files = list((WORK / 'gguf').glob('*.gguf'))\n",
+    "        if gguf_files:\n",
+    "            repo_gguf = os.environ.get('HF_GGUF_REPO') or f'{user}/lab22-dpo-qwen3b-vn-gguf'\n",
+    "            api.create_repo(repo_gguf, repo_type='model', exist_ok=True)\n",
+    "            api.upload_folder(repo_id=repo_gguf, repo_type='model',\n",
+    "                              folder_path=str(WORK / 'gguf'))\n",
+    "            print(f'✓ GGUF files pushed to https://huggingface.co/{repo_gguf}')\n",
+    "        print('Add these links to submission/REFLECTION.md!')\n",
+    "    except Exception as exc:\n",
+    "        print(f'⚠ Hugging Face push failed; Drive backup will still run: {exc}')\n",
 )
 
 # ─── MAKE VERIFY ─────────────────────────────────────────────────────────────
@@ -339,7 +370,9 @@ md("---\n", "## ✅ Submission Verify (make verify)\n")
 
 code(
     "# Chạy pre-submission gatekeeper\n",
-    "!cd /content/lab22 && python scripts/verify.py\n",
+    "verify_rc = run_step('submission verify', 'scripts/verify.py', check=False)\n",
+    "if verify_rc:\n",
+    "    print('⚠ Verify chưa pass hoàn toàn; điều này bình thường nếu REFLECTION/screenshots chưa điền.')\n",
 )
 
 # ─── SYNC TO DRIVE ────────────────────────────────────────────────────────────
@@ -356,8 +389,13 @@ code(
     "    to_backup = [\n",
     "        'submission',\n",
     "        'data/eval',\n",
-    "        'adapters/dpo/dpo_metrics.json',\n",
-    "        'adapters/sft-mini/adapter_config.json',\n",
+    "        'data/pref',\n",
+    "        'adapters/sft-mini',\n",
+    "        'adapters/dpo',\n",
+    "        'adapters/dpo-b0.05',\n",
+    "        'adapters/dpo-b0.10',\n",
+    "        'adapters/dpo-b0.50',\n",
+    "        'bonus/adapters/dpo-bonus',\n",
     "        'notebooks/01_sft_mini.ipynb',\n",
     "        'notebooks/02_preference_data.ipynb',\n",
     "        'notebooks/03_dpo_train.ipynb',\n",
@@ -368,6 +406,8 @@ code(
     "        'bonus/MODEL-CARD.md',\n",
     "        'bonus/README.md',\n",
     "    ]\n",
+    "    if os.environ.get('BACKUP_GGUF_TO_DRIVE', '0').lower() in {'1', 'true', 'yes'}:\n",
+    "        to_backup.append('gguf')\n",
     "    drive_dir = Path(DRIVE_OUT)\n",
     "    for item in to_backup:\n",
     "        src = WORK / item\n",

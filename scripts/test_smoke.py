@@ -38,6 +38,25 @@ def test_colab_notebooks_are_valid_json():
         json.loads(p.read_text(encoding="utf-8"))  # ValueError if corrupt
 
 
+def test_full_pipeline_cells_parse_and_fail_fast():
+    p = REPO / "colab" / "Lab22_FULL_PIPELINE.ipynb"
+    nb = json.loads(p.read_text(encoding="utf-8"))
+    code_cells = ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
+    for index, source in enumerate(code_cells):
+        ast.parse(source, filename=f"{p}:code-cell-{index}")
+    joined = "\n".join(code_cells)
+    assert "def run_step(" in joined
+    assert "!cd /content/lab22" not in joined
+    assert "os.environ['DRIVE_OUT'] = DRIVE_OUT" in joined
+
+
+def test_gguf_export_uses_combined_dpo_adapter():
+    notebook = (REPO / "notebooks" / "05_merge_deploy_gguf.py").read_text(encoding="utf-8")
+    script = (REPO / "scripts" / "merge_and_gguf.py").read_text(encoding="utf-8")
+    assert "PeftModel.from_pretrained(model, str(DPO_PATH))" in notebook
+    assert "PeftModel.from_pretrained(model, args.dpo_path)" in script
+
+
 def test_trainer_uses_processing_class_not_tokenizer():
     # TRL >= 0.13 removed the `tokenizer=` arg in favour of `processing_class=`.
     # With the requirements pin `trl>=0.12,<0.20` a fresh install resolves to
