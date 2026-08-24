@@ -270,13 +270,15 @@ if alpaca_prompts and (os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHR
     print(f">>> Generating SFT+DPO")
     dpo_outputs = generate_with_adapter(DPO_PATH, alpaca_prompts)
 
-    providers = [
-        name for name, key in (
-            ("openai", "OPENAI_API_KEY"),
-            ("openai_cross", "OPENAI_API_KEY"),
-            ("anthropic", "ANTHROPIC_API_KEY"),
-        ) if os.environ.get(key)
-    ]
+    providers = []
+    if os.environ.get("OPENAI_API_KEY"):
+        providers.append("openai")
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        providers.append("anthropic")
+    # The extra gpt-4o-mini calls only add value when Claude is also available
+    # for the rubric's required cross-judge comparison.
+    if os.environ.get("OPENAI_API_KEY") and os.environ.get("ANTHROPIC_API_KEY"):
+        providers.append("openai_cross")
     provider_judgments = {}
     provider_winrates = {}
     for provider in providers:

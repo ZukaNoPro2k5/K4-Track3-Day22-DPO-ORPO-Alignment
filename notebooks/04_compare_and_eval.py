@@ -290,12 +290,13 @@ if os.environ.get("OPENAI_API_KEY"):
     (EVAL_OUT / "judge_results_openai.json").write_text(
         json.dumps(judge_runs["openai"], ensure_ascii=False, indent=2)
     )
-    cross_model = os.environ.get("OPENAI_CROSS_JUDGE_MODEL", "gpt-4o-mini")
-    print(f"Running rubric cross-judge model: {cross_model}")
-    judge_runs["openai_cross"] = judge_with_openai(cross_model)
-    (EVAL_OUT / "judge_results_openai_cross.json").write_text(
-        json.dumps(judge_runs["openai_cross"], ensure_ascii=False, indent=2)
-    )
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        cross_model = os.environ.get("OPENAI_CROSS_JUDGE_MODEL", "gpt-4o-mini")
+        print(f"Running rubric cross-judge model: {cross_model}")
+        judge_runs["openai_cross"] = judge_with_openai(cross_model)
+        (EVAL_OUT / "judge_results_openai_cross.json").write_text(
+            json.dumps(judge_runs["openai_cross"], ensure_ascii=False, indent=2)
+        )
 
 if os.environ.get("ANTHROPIC_API_KEY"):
     model_name = os.environ.get("ANTHROPIC_JUDGE_MODEL", "claude-haiku-4-5")
